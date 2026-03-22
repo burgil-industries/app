@@ -139,7 +139,14 @@ function New-FlatBtn {
 $btnYes = New-FlatBtn "Uninstall" 164 ([System.Drawing.Color]::FromArgb(58,15,12)) $C_DANGER
 $btnNo  = New-FlatBtn "Cancel"    286 $C_CARD $C_TEXT
 
-$frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $lbl3, $btnYes, $btnNo))
+$pb           = New-Object System.Windows.Forms.ProgressBar
+$pb.Location  = New-Object System.Drawing.Point(24, 134)
+$pb.Size      = New-Object System.Drawing.Size(372, 14)
+$pb.Minimum   = 0
+$pb.Maximum   = 100
+$pb.Visible   = $false
+
+$frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $lbl3, $pb, $btnYes, $btnNo))
 
 $btnNo.Add_Click({
     if ($script:uninstallDone -and (Test-Path $InstallDir)) {
@@ -149,36 +156,57 @@ $btnNo.Add_Click({
 })
 $btnYes.Add_Click({
     $btnYes.Visible = $false; $btnNo.Visible = $false
-    $lbl1.Text = "Removing..."
+    $lbl1.Text  = "Uninstalling $AppName..."
+    $lbl3.Text  = "Removing registry entries..."
+    $pb.Value   = 0
+    $pb.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
 
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow\ShellNew"                  -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow"                           -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppName.File"                          -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppNameLow"                            -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $RegPath                                                         -Recurse -Force -ErrorAction SilentlyContinue
+    # Step 1 — registry entries
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow\ShellNew"                      -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow"                               -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppName.File"                              -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppNameLow"                                -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $RegPath                                                             -Recurse -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $AppName -ErrorAction SilentlyContinue
+    $pb.Value = 20
+    [System.Windows.Forms.Application]::DoEvents()
+
+    # Step 2 — shortcuts & PATH
+    $lbl3.Text = "Removing shortcuts..."
+    $pb.Value  = 25
+    [System.Windows.Forms.Application]::DoEvents()
     Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$AppName.lnk" -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$AppName"                -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$AppName"        -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$AppName"                    -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$AppName"            -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\Background\shell\$AppName" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "$env:APPDATA\Microsoft\Windows\SendTo\$AppName.lnk"                  -Force -ErrorAction SilentlyContinue
-    Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$AppName.lnk"     -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\SendTo\$AppName.lnk"                      -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$AppName.lnk"         -Force -ErrorAction SilentlyContinue
     $curPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $newPath = ($curPath -split ";" | Where-Object { $_ -and $_ -ne $InstallDir -and $_ -ne "$InstallDir\data" }) -join ";"
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
     $sc = "$env:USERPROFILE\Desktop\$AppName.lnk"
     if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
+    $pb.Value = 45
+    [System.Windows.Forms.Application]::DoEvents()
 
-    # Flush Explorer's icon/shell cache now that all registry associations are gone
+    # Step 3 — flush shell cache
+    $lbl3.Text = "Flushing shell cache..."
+    $pb.Value  = 50
+    [System.Windows.Forms.Application]::DoEvents()
     [UninstShell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # Clear attributes on everything recursively so Remove-Item can delete cleanly
+    # Step 4 — delete files
+    $lbl3.Text = "Deleting files..."
+    $pb.Value  = 65
+    [System.Windows.Forms.Application]::DoEvents()
     Get-ChildItem $InstallDir -Recurse -Force -ErrorAction SilentlyContinue |
         ForEach-Object { try { $_.Attributes = [System.IO.FileAttributes]::Normal } catch {} }
     $dirItem = Get-Item $InstallDir -Force -ErrorAction SilentlyContinue
     if ($dirItem) { $dirItem.Attributes = [System.IO.FileAttributes]::Normal }
+    $pb.Value = 75
+    [System.Windows.Forms.Application]::DoEvents()
 
     if (Test-Path $InstallDir) {
         Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -192,6 +220,8 @@ $btnYes.Add_Click({
     if (Test-Path $InstallDir) {
         Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping localhost -n 2 >nul)" -Wait -WindowStyle Hidden
     }
+    $pb.Value = 100
+    [System.Windows.Forms.Application]::DoEvents()
 
     $icoLbl.Text      = [char]0x2713
     $icoLbl.ForeColor = $C_SUCCESS
@@ -200,6 +230,7 @@ $btnYes.Add_Click({
     $lbl1.ForeColor   = $C_SUCCESS
     $lbl2.Text        = "All files and registry entries have been removed."
     $lbl3.Text        = ""
+    $pb.Visible       = $false
     $btnNo.Text       = "Close"
     $btnNo.Visible    = $true
     $script:uninstallDone = $true

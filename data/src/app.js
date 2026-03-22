@@ -6,7 +6,7 @@ const path   = require('path');
 
 const APP_NAME    = '__APP_NAME__';
 const APP_VERSION = '__APP_VERSION__';
-const PORT        = 7891;
+const PORT        = 53420;
 const WS_MAGIC    = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 // Rate limit: max 20 messages per 10-second window per remote address
