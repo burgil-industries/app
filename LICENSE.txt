@@ -1,0 +1,84 @@
+ALI Source License 1.0
+Copyright (c) 2026 ALI
+
+TERMS AND CONDITIONS
+
+1. DEFINITIONS
+
+"Software" means ALI and all associated source code, documentation, and
+configuration files distributed under this license.
+
+"Plugin" means a separate work designed to extend or integrate with the
+Software, which does not replicate the Software's core functionality and
+depends on the Software to operate.
+
+"Competing Product" means any product, service, or software whose primary
+purpose substantially replicates or replaces the core functionality of the
+Software, regardless of whether it is based on this source code.
+
+2. GRANT OF RIGHTS
+
+Subject to the conditions below, you are granted a worldwide, royalty-free,
+non-exclusive license to:
+
+a) Use, run, and inspect the Software for any personal or internal purpose.
+b) Modify the Software for personal or internal use.
+c) Create, use, modify, and distribute Plugins for the Software.
+d) Incorporate third-party code into Plugins, provided the license of that
+   third-party code permits such use.
+
+3. RESTRICTIONS
+
+a) You may not use, distribute, or incorporate this Software, in whole or
+   in part, to build, market, or operate a Competing Product.
+
+b) You may not redistribute the Software itself (not as a Plugin) without
+   prior written permission from the copyright holder.
+
+c) You may not remove or alter any copyright, license, or attribution
+   notices present in the Software.
+
+4. PROHIBITED USES
+
+You may not use the Software:
+
+a) For any purpose that is unlawful, harmful, abusive, threatening,
+   harassing, defamatory, or otherwise objectionable.
+
+b) To facilitate or participate in any illegal activity, including but not
+   limited to fraud, malware distribution, unauthorized access to systems,
+   or violation of any applicable law or regulation.
+
+c) In any manner that could damage, disable, overburden, or impair the
+   Software or its associated infrastructure.
+
+5. REGIONAL COMPLIANCE
+
+You are solely responsible for determining whether your use of the Software
+is lawful in your jurisdiction. The authors make no representation that the
+Software is appropriate or available for use in any specific location. If
+access to or use of the Software is prohibited by the laws of your region,
+you must not use it. Proceeding with installation or use constitutes your
+confirmation that such use is permitted under the laws applicable to you.
+
+6. PLUGINS
+
+Plugins you create are your own work. This license places no restrictions
+on the license you choose for your Plugins, provided the Plugin does not
+itself constitute a Competing Product.
+
+7. DISCLAIMER - USE AT YOUR OWN RISK
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. YOU USE THIS SOFTWARE ENTIRELY AT YOUR OWN RISK.
+
+THE AUTHORS AND COPYRIGHT HOLDERS EXPRESSLY DISCLAIM ALL WARRANTIES,
+INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, ACCURACY, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING BUT NOT LIMITED TO LOSS OF DATA, LOSS OF PROFITS, BUSINESS
+INTERRUPTION, OR ANY OTHER LOSS) ARISING OUT OF OR IN CONNECTION WITH THE
+USE OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+OF SUCH DAMAGES.
