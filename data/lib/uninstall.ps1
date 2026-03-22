@@ -187,6 +187,10 @@ $btnYes.Add_Click({
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
     $sc = "$env:USERPROFILE\Desktop\$AppName.lnk"
     if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
+    foreach ($lnkName in @("Repair.lnk", "Uninstall.lnk", "Check for Updates.lnk")) {
+        $lnkPath = Join-Path $InstallDir $lnkName
+        if (Test-Path $lnkPath) { Remove-Item $lnkPath -Force -ErrorAction SilentlyContinue }
+    }
     $pb.Value = 45
     [System.Windows.Forms.Application]::DoEvents()
 
