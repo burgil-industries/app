@@ -8,7 +8,16 @@ try {
     $parsed = [System.Uri]$Uri
     $host_  = $parsed.Host.ToLower()
     $path_  = $parsed.AbsolutePath.TrimStart('/')
-    $query  = [System.Web.HttpUtility]::ParseQueryString($parsed.Query)
+    $queryString = $parsed.Query.TrimStart('?')
+    $query = @{}
+    if ($queryString) {
+        foreach ($part in $queryString.Split('&')) {
+            $kv = $part.Split('=', 2)
+            $key = [System.Uri]::UnescapeDataString($kv[0])
+            $val = if ($kv.Count -gt 1) { [System.Uri]::UnescapeDataString($kv[1]) } else { '' }
+            $query[$key] = $val
+        }
+    }
 
     switch ($host_) {
 
@@ -49,11 +58,11 @@ try {
         }
 
         'open' {
-            # ali://open/PLUGIN_ID - launch an installed plugin
-            $pluginId = $path_
+            $path = $query['path']
+            $msg = "URI    : $Uri`nScheme : $($parsed.Scheme)`nHost   : $($parsed.Host)`nPath   : $($parsed.AbsolutePath)`nQuery  : $($parsed.Query)"
+            if ($path) { $msg += "`nFile   : $path" }
             [System.Windows.Forms.MessageBox]::Show(
-                "Opening plugin: $pluginId",
-                "$AppName",
+                $msg, "$AppName Protocol Handler",
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
         }
