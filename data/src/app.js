@@ -3,6 +3,7 @@ const http   = require('http');
 const crypto = require('crypto');
 const fs     = require('fs');
 const path   = require('path');
+const { PermissionError, checkPermission, validatePermissions, expandPermissions } = require('./permissions');
 
 const APP_NAME    = '__APP_NAME__';
 const APP_VERSION = '__APP_VERSION__';
@@ -90,6 +91,8 @@ const sockets     = new Set();
 const wsHandlers  = new Map();
 // Loaded plugin manifests: id -> { id, name, version, ... }
 const loadedPlugins = {};
+// Shared services map (cross-plugin)
+const services = new Map();
 
 function broadcast(obj) {
     for (const s of sockets) send(s, obj);
@@ -100,9 +103,14 @@ function readPluginsJson() {
     catch (_) { return {}; }
 }
 
-// Plugin context - passed to each plugin's install(ctx) function
-function createContext() {
-    const services = new Map();
+// ── Per-plugin context with permission enforcement ───────────────────────────
+
+function createContext(pluginId, grantedPermissions) {
+    function requirePermission(needed) {
+        if (!checkPermission(grantedPermissions, needed)) {
+            throw new PermissionError(pluginId, needed);
+        }
+    }
 
     return {
         // Identity
@@ -112,27 +120,113 @@ function createContext() {
 
         // Service provider/consumer
         provide(key, val) {
+            requirePermission('ctx.provide');
             services.set(key, val);
         },
         use(key) {
             if (!services.has(key)) {
                 throw new Error(
-                    `[plugin] Service "${key}" not found. ` +
+                    `[plugin:${pluginId}] Service "${key}" not found. ` +
                     `Is the providing plugin listed as a dependency and loaded first?`
                 );
             }
             return services.get(key);
         },
 
-        // WS integration
+        // WS integration (always allowed)
         onMessage(type, handler) { wsHandlers.set(type, handler); },
-        reply:     send,
-        broadcast,
+        reply: send,
 
-        // Introspection
+        // Broadcast (permission-gated)
+        broadcast(obj) {
+            requirePermission('ctx.broadcast');
+            broadcast(obj);
+        },
+
+        // Introspection (always allowed)
         loadedPlugins() { return Object.assign({}, loadedPlugins); },
+
+        // ── Permission-gated file system ─────────────────────────────────
+        readFile(filePath) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.readFileSync(resolved, 'utf8');
+        },
+
+        readFileBuffer(filePath) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.readFileSync(resolved);
+        },
+
+        writeFile(filePath, data) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.write:${resolved}`);
+            fs.writeFileSync(resolved, data);
+        },
+
+        existsSync(filePath) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.existsSync(resolved);
+        },
+
+        readDir(dirPath) {
+            const resolved = path.resolve(dirPath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.readdirSync(resolved);
+        },
+
+        // ── Permission-gated network ─────────────────────────────────────
+        listen(port, handler) {
+            requirePermission(`net.listen:${port}`);
+            const srv = http.createServer(handler);
+            srv.listen(port, '127.0.0.1');
+            return srv;
+        },
+
+        fetch(url, options) {
+            const parsed = new URL(url);
+            requirePermission(`net.connect:${parsed.hostname}`);
+            // Use Node.js built-in fetch if available, otherwise http/https
+            if (typeof globalThis.fetch === 'function') {
+                return globalThis.fetch(url, options);
+            }
+            const mod = parsed.protocol === 'https:' ? require('https') : require('http');
+            return new Promise((resolve, reject) => {
+                mod.get(url, options || {}, res => {
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, text: () => Promise.resolve(data), json: () => Promise.resolve(JSON.parse(data)) }));
+                }).on('error', reject);
+            });
+        },
+
+        // ── Permission-gated system exec ─────────────────────────────────
+        exec(command, args) {
+            const cmd = typeof command === 'string' ? command.split(/\s+/)[0] : command;
+            requirePermission(`system.exec:${cmd}`);
+            const { execSync } = require('child_process');
+            const fullCmd = args ? `${command} ${args.join(' ')}` : command;
+            return execSync(fullCmd, { encoding: 'utf8' });
+        },
+
+        execAsync(command, args) {
+            const cmd = typeof command === 'string' ? command.split(/\s+/)[0] : command;
+            requirePermission(`system.exec:${cmd}`);
+            const { exec } = require('child_process');
+            const fullCmd = args ? `${command} ${args.join(' ')}` : command;
+            return new Promise((resolve, reject) => {
+                exec(fullCmd, (err, stdout, stderr) => {
+                    if (err) reject(err);
+                    else resolve({ stdout, stderr });
+                });
+            });
+        },
     };
 }
+
+// ── Plugin loader ────────────────────────────────────────────────────────────
 
 function loadPlugins() {
     if (!fs.existsSync(pluginsDir)) {
@@ -151,8 +245,6 @@ function loadPlugins() {
         return a.localeCompare(b);
     });
 
-    const ctx = createContext();
-
     for (const name of entries) {
         const dir          = path.join(pluginsDir, name);
         const manifestPath = path.join(dir, 'plugin.json');
@@ -166,15 +258,31 @@ function loadPlugins() {
             continue;
         }
 
+        // Read and validate permissions
+        const rawPerms = manifest.permissions || [];
+        const expanded = expandPermissions(rawPerms, dataDir);
+        const invalid  = validatePermissions(expanded);
+        if (invalid.length > 0) {
+            console.warn(`[plugin] "${name}" has unrecognized permissions: ${invalid.join(', ')}`);
+        }
+
+        const pluginId = manifest.id || name;
+
         try {
+            const ctx    = createContext(pluginId, expanded);
             const plugin = require(path.join(dir, manifest.main || 'index.js'));
             if (typeof plugin.install === 'function') plugin.install(ctx);
-            loadedPlugins[manifest.id || name] = {
+            loadedPlugins[pluginId] = {
                 name:    manifest.name    || name,
                 version: manifest.version || '0.0.0',
             };
+            console.log(`[plugin] loaded "${pluginId}" with permissions: [${expanded.join(', ')}]`);
         } catch (e) {
-            console.error(`[plugin] failed to load "${name}": ${e.message}`);
+            if (e instanceof PermissionError) {
+                console.error(`[plugin] permission denied for "${name}": ${e.message}`);
+            } else {
+                console.error(`[plugin] failed to load "${name}": ${e.message}`);
+            }
         }
     }
 
@@ -207,6 +315,15 @@ function handleMessage(socket, ip, raw) {
                 plugins: readPluginsJson(),
             });
             break;
+        case 'install-package': {
+            // Package install request from the web UI
+            const plugins = msg.plugins || [];
+            const packageId = msg.packageId || 'unknown';
+            console.log(`[ws] install-package request: ${packageId} -> [${plugins.join(', ')}]`);
+            // Placeholder: actual package installation logic would go here
+            send(socket, { type: 'install-package:ack', packageId, plugins, status: 'received' });
+            break;
+        }
         default: {
             const handler = wsHandlers.get(msg.type);
             if (handler) handler(socket, msg);
