@@ -78,13 +78,108 @@ function send(socket, obj) {
     try { socket.write(makeFrame(JSON.stringify(obj))); } catch (_) {}
 }
 
-// ── Plugin registry ────────────────────────────────────────────────────────────
+// ── Plugin system ─────────────────────────────────────────────────────────────
 
 const pluginsFile = path.join(__dirname, '..', 'plugins.json');
+const pluginsDir  = path.join(__dirname, '..', 'plugins');
+const dataDir     = path.join(__dirname, '..');
 
-function loadPlugins() {
+// All active WS sockets
+const sockets     = new Set();
+// Plugin-registered WS message handlers: type -> handler(socket, msg)
+const wsHandlers  = new Map();
+// Loaded plugin manifests: id -> { id, name, version, ... }
+const loadedPlugins = {};
+
+function broadcast(obj) {
+    for (const s of sockets) send(s, obj);
+}
+
+function readPluginsJson() {
     try { return JSON.parse(fs.readFileSync(pluginsFile, 'utf8')); }
     catch (_) { return {}; }
+}
+
+// Plugin context - passed to each plugin's install(ctx) function
+function createContext() {
+    const services = new Map();
+
+    return {
+        // Identity
+        appName:    APP_NAME,
+        appVersion: APP_VERSION,
+        dataDir,
+
+        // Service provider/consumer
+        provide(key, val) {
+            services.set(key, val);
+        },
+        use(key) {
+            if (!services.has(key)) {
+                throw new Error(
+                    `[plugin] Service "${key}" not found. ` +
+                    `Is the providing plugin listed as a dependency and loaded first?`
+                );
+            }
+            return services.get(key);
+        },
+
+        // WS integration
+        onMessage(type, handler) { wsHandlers.set(type, handler); },
+        reply:     send,
+        broadcast,
+
+        // Introspection
+        loadedPlugins() { return Object.assign({}, loadedPlugins); },
+    };
+}
+
+function loadPlugins() {
+    if (!fs.existsSync(pluginsDir)) {
+        console.log(`[plugin] no plugins directory at ${pluginsDir}`);
+        return;
+    }
+
+    const entries = fs.readdirSync(pluginsDir);
+
+    // Dependency sort: core first, then ui, then everything else
+    entries.sort((a, b) => {
+        if (a === 'core') return -1;
+        if (b === 'core') return 1;
+        if (a === 'ui')   return -1;
+        if (b === 'ui')   return 1;
+        return a.localeCompare(b);
+    });
+
+    const ctx = createContext();
+
+    for (const name of entries) {
+        const dir          = path.join(pluginsDir, name);
+        const manifestPath = path.join(dir, 'plugin.json');
+
+        if (!fs.existsSync(manifestPath)) continue;
+
+        let manifest;
+        try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); }
+        catch (e) {
+            console.error(`[plugin] bad manifest for ${name}: ${e.message}`);
+            continue;
+        }
+
+        try {
+            const plugin = require(path.join(dir, manifest.main || 'index.js'));
+            if (typeof plugin.install === 'function') plugin.install(ctx);
+            loadedPlugins[manifest.id || name] = {
+                name:    manifest.name    || name,
+                version: manifest.version || '0.0.0',
+            };
+        } catch (e) {
+            console.error(`[plugin] failed to load "${name}": ${e.message}`);
+        }
+    }
+
+    const count = Object.keys(loadedPlugins).length;
+    console.log(`[plugin] ${count} plugin(s) loaded: ${Object.keys(loadedPlugins).join(', ') || 'none'}`);
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
@@ -99,15 +194,24 @@ function handleMessage(socket, ip, raw) {
         send(socket, { type: 'error', message: 'invalid json' });
         return;
     }
+
     switch (msg.type) {
         case 'ping':
             send(socket, { type: 'pong', app: APP_NAME, version: APP_VERSION });
             break;
         case 'versions':
-            send(socket, { type: 'versions', app: APP_NAME, version: APP_VERSION, plugins: loadPlugins() });
+            send(socket, {
+                type:    'versions',
+                app:     APP_NAME,
+                version: APP_VERSION,
+                plugins: readPluginsJson(),
+            });
             break;
-        default:
-            send(socket, { type: 'error', message: 'unknown type' });
+        default: {
+            const handler = wsHandlers.get(msg.type);
+            if (handler) handler(socket, msg);
+            else send(socket, { type: 'error', message: `unknown type: ${msg.type}` });
+        }
     }
 }
 
@@ -135,6 +239,10 @@ server.on('upgrade', (req, socket) => {
         '\r\n'
     );
 
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.on('error', () => sockets.delete(socket));
+
     let buf = Buffer.alloc(0);
     socket.on('data', chunk => {
         buf = Buffer.concat([buf, chunk]);
@@ -144,7 +252,6 @@ server.on('upgrade', (req, socket) => {
             handleMessage(socket, ip, msg);
         }
     });
-    socket.on('error', () => {});
 });
 
 server.on('error', err => {
@@ -157,4 +264,5 @@ server.on('error', err => {
 
 server.listen(PORT, '127.0.0.1', () => {
     console.log(`${APP_NAME} ${APP_VERSION} - WS server listening on ws://127.0.0.1:${PORT}`);
+    loadPlugins();
 });
