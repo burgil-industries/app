@@ -55,7 +55,7 @@ try {
 
     if ($latest -gt $installed) {
         $frm = New-Object System.Windows.Forms.Form
-        $frm.Text            = "$APP_NAME — Update Available"
+        $frm.Text            = "$APP_NAME - Update Available"
         $frm.ClientSize      = New-Object System.Drawing.Size(400, 152)
         $frm.StartPosition   = "CenterScreen"
         $frm.FormBorderStyle = "FixedDialog"

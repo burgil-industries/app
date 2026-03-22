@@ -162,7 +162,7 @@ $btnYes.Add_Click({
     $pb.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 1 — registry entries
+    # Step 1 - registry entries
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow\ShellNew"                      -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow"                               -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppName.File"                              -Recurse -Force -ErrorAction SilentlyContinue
@@ -172,7 +172,7 @@ $btnYes.Add_Click({
     $pb.Value = 20
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 2 — shortcuts & PATH
+    # Step 2 - shortcuts & PATH
     $lbl3.Text = "Removing shortcuts..."
     $pb.Value  = 25
     [System.Windows.Forms.Application]::DoEvents()
@@ -194,14 +194,14 @@ $btnYes.Add_Click({
     $pb.Value = 45
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 3 — flush shell cache
+    # Step 3 - flush shell cache
     $lbl3.Text = "Flushing shell cache..."
     $pb.Value  = 50
     [System.Windows.Forms.Application]::DoEvents()
     [UninstShell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # Step 4 — delete files
+    # Step 4 - delete files
     $lbl3.Text = "Deleting files..."
     $pb.Value  = 65
     [System.Windows.Forms.Application]::DoEvents()
