@@ -55,7 +55,7 @@ try {
     switch ($host_) {
 
         'install' {
-            # ali://install/PLUGIN_ID?version=1.0.0&deps=dep1,dep2&permissions=fs.read,net.connect
+            # computer://install/PLUGIN_ID?version=1.0.0&deps=dep1,dep2&permissions=fs.read,net.connect
             $pluginId = $path_
             $version  = $query['version']
             $deps     = $query['deps']
@@ -99,7 +99,7 @@ try {
         }
 
         'install-package' {
-            # ali://install-package/PACKAGE_ID?plugins=core,ui,settings
+            # computer://install-package/PACKAGE_ID?plugins=core,ui,settings
             $packageId = $path_
             $pluginsList = $query['plugins']
 

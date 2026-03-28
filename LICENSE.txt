@@ -1,11 +1,11 @@
-ALI Source License 1.0
-Copyright (c) 2026 ALI
+COMPUTER Source License 1.0
+Copyright (c) 2026 COMPUTER
 
 TERMS AND CONDITIONS
 
 1. DEFINITIONS
 
-"Software" means ALI and all associated source code, documentation, and
+"Software" means COMPUTER and all associated source code, documentation, and
 configuration files distributed under this license.
 
 "Plugin" means a separate work designed to extend or integrate with the
