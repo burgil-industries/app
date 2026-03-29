@@ -26,14 +26,18 @@ b) Modify the Software for personal or internal use.
 c) Create, use, modify, and distribute Plugins for the Software.
 d) Incorporate third-party code into Plugins, provided the license of that
    third-party code permits such use.
+e) Share and distribute the Software to others, provided this license
+   accompanies any distribution and no source files are altered to misrepresent
+   the origin of the Software.
 
 3. RESTRICTIONS
 
 a) You may not use, distribute, or incorporate this Software, in whole or
    in part, to build, market, or operate a Competing Product.
 
-b) You may not redistribute the Software itself (not as a Plugin) without
-   prior written permission from the copyright holder.
+b) You may not redistribute a modified version of the Software itself (not
+   as a Plugin) without prior written permission from the copyright holder.
+   Unmodified redistribution is permitted under section 2(e).
 
 c) You may not remove or alter any copyright, license, or attribution
    notices present in the Software.
@@ -61,13 +65,46 @@ access to or use of the Software is prohibited by the laws of your region,
 you must not use it. Proceeding with installation or use constitutes your
 confirmation that such use is permitted under the laws applicable to you.
 
-6. PLUGINS
+6. PLUGINS AND OPEN SOURCE REQUIREMENT
 
-Plugins you create are your own work. This license places no restrictions
-on the license you choose for your Plugins, provided the Plugin does not
-itself constitute a Competing Product.
+The COMPUTER ecosystem is built on the principle that users should always be
+able to inspect, audit, and trust what runs on their machines. To uphold this
+principle, the following requirements apply to all publicly distributed Plugins:
 
-7. DISCLAIMER - USE AT YOUR OWN RISK
+a) Any Plugin distributed publicly (released outside of personal or internal
+   use) MUST be licensed under the GNU Affero General Public License v3.0
+   (AGPLv3) or a compatible license approved in writing by the copyright
+   holder.
+
+   Full license text: https://www.gnu.org/licenses/agpl-3.0
+   Plain-language summary: https://www.tldrlegal.com/license/gnu-affero-general-public-license-v3-agpl-3-0
+
+b) Any publicly distributed Plugin MUST make its complete source code freely
+   available. Closed-source plugins distributed to others are not permitted
+   in the COMPUTER ecosystem.
+
+c) Plugins you create for personal or internal use are not subject to these
+   distribution requirements and may be kept private.
+
+d) The AGPLv3 requirement exists because COMPUTER connects to networks and
+   AI providers. The AGPLv3 closes the "network use" loophole - if you modify
+   a plugin and offer it to others over a network, you must provide the source.
+   This ensures the entire ecosystem remains open and auditable.
+
+e) Third-party libraries incorporated into Plugins must be compatible with
+   AGPLv3. The plugin author is responsible for ensuring compatibility.
+
+f) A Plugin does not constitute a Competing Product solely by implementing
+   features that interact with or extend the Software's functionality.
+
+7. OPEN SOURCE COMMITMENT
+
+The authors commit that the Software itself will remain open source and freely
+available under these terms. The source code for the Software, including the
+installer, runtime, and all core components, will always be publicly accessible
+for inspection and audit before running on any machine.
+
+8. DISCLAIMER - USE AT YOUR OWN RISK
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED. YOU USE THIS SOFTWARE ENTIRELY AT YOUR OWN RISK.
