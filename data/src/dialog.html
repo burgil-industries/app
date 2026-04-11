@@ -18,7 +18,6 @@
     --text-muted:  #64748b;
     --text-dim:    #94a3b8;
     --green:       #10b981;
-    --green-dim:   #065f46;
     --mono:        'Cascadia Code', 'Consolas', monospace;
   }
 
@@ -32,43 +31,39 @@
     user-select: none;
   }
 
-  body {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  body { display: flex; flex-direction: column; overflow: hidden; }
 
   /* ── Header ─────────────────────────────────────────────────────────── */
   .header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 22px 24px 20px;
+    padding: 13px 18px 11px;
     flex-shrink: 0;
   }
 
   .app-tag {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: .06em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .plugin-row {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
   }
 
   .plugin-avatar {
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: 17px;
     font-weight: 700;
     flex-shrink: 0;
     border: 1px solid var(--border);
@@ -79,41 +74,59 @@
   .plugin-name-line {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: 7px;
     flex-wrap: wrap;
   }
 
   .plugin-name {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--text);
     white-space: nowrap;
   }
 
   .plugin-version {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
     background: var(--surface-3);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 1px 6px;
+    padding: 1px 5px;
     flex-shrink: 0;
   }
 
   .plugin-desc {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: 3px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* ── Bundle plugin pills ─────────────────────────────────────────────── */
+  .plugin-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .pill {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    background: var(--surface-3);
   }
 
   /* ── Permission list ─────────────────────────────────────────────────── */
   .body {
     flex: 1;
     overflow-y: auto;
-    padding: 18px 24px 12px;
+    padding: 11px 18px 8px;
     scrollbar-width: thin;
     scrollbar-color: var(--surface-3) transparent;
   }
@@ -128,31 +141,42 @@
     letter-spacing: .08em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin-bottom: 10px;
+    margin-bottom: 7px;
+  }
+
+  .group-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 8px 0 5px;
+    padding: 0 2px;
+    opacity: .75;
   }
 
   .perm-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
   }
 
   .perm-item {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
+    gap: 10px;
     background: var(--surface-2);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 14px;
+    border-radius: 9px;
+    padding: 9px 12px;
     transition: border-color .15s;
   }
 
   .perm-item:hover { border-color: #333344; }
 
   .perm-icon {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
     margin-top: 1px;
     color: var(--text-dim);
@@ -160,26 +184,26 @@
     align-items: center;
     justify-content: center;
   }
-  .perm-icon svg { width: 18px; height: 18px; }
+  .perm-icon svg { width: 16px; height: 16px; }
 
   .perm-text { flex: 1; min-width: 0; }
 
   .perm-label {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text);
   }
 
   .perm-scope {
     font-family: var(--mono);
-    font-size: 10.5px;
+    font-size: 10px;
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: 3px;
     word-break: break-all;
     line-height: 1.5;
     background: var(--surface-3);
     border-radius: 4px;
-    padding: 3px 6px;
+    padding: 2px 5px;
     display: inline-block;
     max-width: 100%;
   }
@@ -187,9 +211,9 @@
   /* ── Footer ──────────────────────────────────────────────────────────── */
   .footer {
     border-top: 1px solid var(--border);
-    padding: 14px 24px 16px;
+    padding: 10px 18px 12px;
     display: flex;
-    gap: 10px;
+    gap: 8px;
     justify-content: flex-end;
     flex-shrink: 0;
     background: var(--surface);
@@ -197,9 +221,9 @@
 
   button {
     border: none;
-    border-radius: 8px;
-    padding: 9px 22px;
-    font-size: 13px;
+    border-radius: 7px;
+    padding: 8px 20px;
+    font-size: 12px;
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
@@ -232,14 +256,14 @@
     align-items: center;
     justify-content: center;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     animation: fadein .2s ease;
   }
 
   .done-overlay.show { display: flex; }
 
   .done-icon { display: flex; align-items: center; justify-content: center; }
-  .done-text { font-size: 14px; color: var(--text-muted); }
+  .done-text { font-size: 13px; color: var(--text-muted); }
 
   @keyframes fadein {
     from { opacity: 0; }
@@ -249,7 +273,7 @@
 </head>
 <body>
 
-<!-- Plugin data injected by the vm.js HTTP server -->
+<!-- Plugin / bundle data injected by the vm.js HTTP server -->
 <script id="d" type="application/json">__PLUGIN_DATA__</script>
 
 <div class="header">
@@ -262,6 +286,7 @@
         <span class="plugin-version" id="pver"></span>
       </div>
       <div class="plugin-desc" id="pdesc"></div>
+      <div class="plugin-pills" id="ppills" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -279,7 +304,7 @@
 <div class="done-overlay" id="done"></div>
 
 <script>
-// Inline SVG icons — pure ASCII, no encoding issues
+// Inline SVG icons - pure ASCII, no encoding issues
 const SVG = (d, extra) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"${extra ? ' ' + extra : ''}>${d}</svg>`;
 
@@ -308,6 +333,36 @@ const AVATAR_COLORS = [
   ['#3b2a10','#fbbf24'], ['#3b1a1a','#f87171'], ['#1a2f3b','#38bdf8'],
 ];
 
+// Shorten long paths to last 3 segments, e.g. C:\...\data\plugins\example
+function truncateScope(scope) {
+  if (scope.length <= 44) return scope;
+  const hasBs = scope.includes('\\');
+  const sep = hasBs ? '\\' : (scope.includes('/') ? '/' : null);
+  if (!sep) return scope;
+  const parts = scope.split(sep).filter(Boolean);
+  if (parts.length <= 3) return scope;
+  return '...' + sep + parts.slice(-3).join(sep);
+}
+
+function renderPerm(perm, container) {
+  const colon = perm.indexOf(':');
+  const base  = colon === -1 ? perm : perm.slice(0, colon);
+  const scope = colon === -1 ? null  : perm.slice(colon + 1);
+
+  const icon = ICONS[base] || DEFAULT_ICON;
+  const desc = PERM_DESCRIPTIONS[base] || base;
+
+  const item = document.createElement('div');
+  item.className = 'perm-item';
+  item.innerHTML =
+    `<span class="perm-icon">${icon}</span>` +
+    `<div class="perm-text">` +
+      `<div class="perm-label">${desc}</div>` +
+      (scope ? `<div class="perm-scope">${truncateScope(scope)}</div>` : '') +
+    `</div>`;
+  container.appendChild(item);
+}
+
 const data = JSON.parse(document.getElementById('d').textContent);
 const PERM_DESCRIPTIONS = data.permDescriptions;
 
@@ -324,25 +379,35 @@ av.style.background = AVATAR_COLORS[ci][0];
 av.style.color      = AVATAR_COLORS[ci][1];
 av.textContent      = (data.name[0] || '?').toUpperCase();
 
-// Permission list
 const list = document.getElementById('perm-list');
-for (const perm of data.permissions) {
-  const colon = perm.indexOf(':');
-  const base  = colon === -1 ? perm : perm.slice(0, colon);
-  const scope = colon === -1 ? null  : perm.slice(colon + 1);
 
-  const icon = ICONS[base] || DEFAULT_ICON;
-  const desc = PERM_DESCRIPTIONS[base] || base;
+if (data.type === 'bundle') {
+  // Show member plugin pills under the bundle name
+  const pillsEl = document.getElementById('ppills');
+  pillsEl.style.display = '';
+  for (const p of data.plugins) {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.textContent = p.name;
+    pillsEl.appendChild(pill);
+  }
 
-  const item = document.createElement('div');
-  item.className = 'perm-item';
-  item.innerHTML =
-    `<span class="perm-icon">${icon}</span>` +
-    `<div class="perm-text">` +
-      `<div class="perm-label">${desc}</div>` +
-      (scope ? `<div class="perm-scope">${scope}</div>` : '') +
-    `</div>`;
-  list.appendChild(item);
+  // Render permissions grouped by member plugin
+  for (const plugin of data.plugins) {
+    if (!plugin.permissions || plugin.permissions.length === 0) continue;
+    const grp = document.createElement('div');
+    grp.className = 'group-label';
+    grp.textContent = plugin.name;
+    list.appendChild(grp);
+    for (const perm of plugin.permissions) {
+      renderPerm(perm, list);
+    }
+  }
+} else {
+  // Single plugin - flat list
+  for (const perm of data.permissions) {
+    renderPerm(perm, list);
+  }
 }
 
 async function answer(granted) {

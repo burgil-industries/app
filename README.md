@@ -5,7 +5,7 @@
 
 ---
 
-This repository contains the files that are **written to the user's machine** at install time. Nothing here runs during installation — these files are the application that gets installed.
+This repository contains the files that are **written to the user's machine** at install time. Nothing here runs during installation - these files are the application that gets installed.
 
 ## How it works
 
@@ -37,7 +37,7 @@ Edit files here to change what ends up on the user's machine. Then run `build.ps
 .\build.ps1
 ```
 
-Do **not** edit `public/install.ps1` directly — it is a generated file and will be overwritten.
+Do **not** edit `public/install.ps1` directly - it is a generated file and will be overwritten.
 
 ## Layout
 
