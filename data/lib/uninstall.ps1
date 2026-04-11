@@ -48,7 +48,7 @@ if (-not $PresetInstallDir) {
     $tempScript = "$env:TEMP\$($AppNameLow)_uninstall_run.ps1"
     Copy-Item $src $tempScript -Force
     $vbs = "$env:TEMP\$($AppNameLow)_uninstall_run.vbs"
-    $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tempScript`" `"$InstallDir`""
+    $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -File `"$tempScript`" `"$InstallDir`""
     $cmdVbs = $cmd.Replace('"', '""')
     $vbsContent = @"
 Set sh = CreateObject("WScript.Shell")

@@ -101,7 +101,7 @@ try {
         $btnInstall.Add_Click({
             $frm.Close()
             if (Test-Path $ps1Path) {
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$ps1Path`""
+                Start-Process powershell.exe -ArgumentList "-NoProfile -File `"$ps1Path`""
             }
         })
         $btnWeb.Add_Click({
