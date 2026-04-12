@@ -113,7 +113,7 @@ class PluginVM {
         return candidates.find(p => { try { fs.accessSync(p); return true; } catch (_) { return false; } }) || null;
     }
 
-    _openBrowser(url, w = 420, h = 380) {
+    _openBrowser(url, w = 450, h = 380) {
         const edge = this._findEdge();
         if (edge) {
             // A dedicated profile dir forces Edge to open a fresh window that
@@ -144,11 +144,11 @@ class PluginVM {
      * anything).  The SSE stream stays alive for the entire lifetime of the page.
      *
      * @param {object} dialogData  Fully-formed data object injected into dialog.html
-     * @param {number} [winW=420]
+     * @param {number} [winW=450]
      * @param {number} [winH=380]
      * @returns {Promise<boolean>} true = granted, false = denied/closed
      */
-    _showPermDialog(dialogData, winW = 420, winH = 380) {
+    _showPermDialog(dialogData, winW = 450, winH = 380) {
         const iconPath = path.join(this.dataDir, 'assets', `${this.appName.toLowerCase()}.ico`);
 
         return new Promise((resolve) => {
@@ -289,11 +289,11 @@ class PluginVM {
             permissions     : requested,
             permDescriptions: PERM_DESCRIPTIONS,
             permReasons     : expandedReasons,
-            winW            : 420,
+            winW            : 450,
             winH,
         };
 
-        const granted = await this._showPermDialog(dialogData, 420, winH);
+        const granted = await this._showPermDialog(dialogData, 450, winH);
         if (!granted) {
             throw new Error(`[vm] Permission denied by user for plugin "${pluginId}"`);
         }
@@ -349,11 +349,11 @@ class PluginVM {
             description     : bundleMeta.description || '',
             plugins         : groups,
             permDescriptions: PERM_DESCRIPTIONS,
-            winW            : 440,
+            winW            : 450,
             winH,
         };
 
-        const granted = await this._showPermDialog(dialogData, 440, winH);
+        const granted = await this._showPermDialog(dialogData, 450, winH);
         if (!granted) return false;
 
         for (const meta of memberMetas) {

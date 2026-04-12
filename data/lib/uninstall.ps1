@@ -83,7 +83,12 @@ $frm.FormBorderStyle = "FixedDialog"
 $frm.MaximizeBox     = $false
 $frm.MinimizeBox     = $false
 $frm.BackColor       = $C_BG
-$frm.Icon            = [System.Drawing.SystemIcons]::Shield
+$_icoPath = "$InstallDir\data\assets\$AppNameLow.ico"
+if (Test-Path $_icoPath) {
+    try { $frm.Icon = New-Object System.Drawing.Icon($_icoPath) } catch { $frm.Icon = [System.Drawing.SystemIcons]::Shield }
+} else {
+    $frm.Icon = [System.Drawing.SystemIcons]::Shield
+}
 
 $frm.Add_Load({ [UninstDark]::Enable($frm.Handle) })
 
