@@ -420,14 +420,14 @@ const DEFAULT_ICON =
 
 // Extra technical detail shown in the hover tooltip per permission type
 const PERM_DETAILS = {
-  'fs.read'      : 'ctx.readFile(path) · ctx.readDir(path) · ctx.existsSync(path)',
+  'fs.read'      : 'ctx.readFile(path) - ctx.readDir(path) - ctx.existsSync(path)',
   'fs.write'     : 'ctx.writeFile(path, data)',
-  'net.listen'   : 'ctx.listen(port, handler) → http.Server',
-  'net.connect'  : 'ctx.fetch(url, options) → Promise<Response>',
-  'system.exec'  : 'ctx.exec(cmd, args) · ctx.execAsync(cmd) · ctx.spawnDetached(cmd, args)',
+  'net.listen'   : 'ctx.listen(port, handler) -> http.Server',
+  'net.connect'  : 'ctx.fetch(url, options) -> Promise<Response>',
+  'system.exec'  : 'ctx.exec(cmd, args) - ctx.execAsync(cmd) - ctx.spawnDetached(cmd, args)',
   'ctx.provide'  : 'ctx.provide(name, value)  -  exposes a service other plugins can ctx.use()',
   'ctx.broadcast': 'ctx.broadcast(msg)  -  fires vm:broadcast on the shared event bus',
-  'vm.manage'    : 'ctx.use("vm")  -  getAll · disable · enable · resetPerms · getDependents',
+  'vm.manage'    : 'ctx.use("vm")  -  getAll - disable - enable - resetPerms - getDependents',
 };
 
 const AVATAR_COLORS = [

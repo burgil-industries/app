@@ -1,7 +1,7 @@
 # app
 
 > **Part of [burgil-industries/computer](https://github.com/burgil-industries/computer)**
-> [`computer`](https://github.com/burgil-industries/computer) → **`app`** | [`installer`](https://github.com/burgil-industries/installer) | [`public`](https://github.com/burgil-industries/public) | [`plugins`](https://github.com/burgil-industries/plugins)
+> [`computer`](https://github.com/burgil-industries/computer) -> **`app`** | [`installer`](https://github.com/burgil-industries/installer) | [`public`](https://github.com/burgil-industries/public) | [`plugins`](https://github.com/burgil-industries/plugins)
 
 ---
 
@@ -17,7 +17,7 @@ This repository contains the files that are **written to the user's machine** at
 
 This directive reads every file under `app/` and encodes each one as a PowerShell here-string variable inside `public/install.ps1`. At install time, the installer script extracts those variables back to disk.
 
-### File → variable → disk path
+### File -> variable -> disk path
 
 | Source file | Variable in install.ps1 | Written to |
 |---|---|---|

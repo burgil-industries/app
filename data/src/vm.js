@@ -180,7 +180,7 @@ class PluginVM {
                 }
 
                 // -- SSE endpoint - stays open while the dialog window is open --
-                // When the window closes, this connection drops → settle(false).
+                // When the window closes, this connection drops -> settle(false).
                 if (req.method === 'GET' && req.url === '/sse') {
                     res.writeHead(200, {
                         'Content-Type' : 'text/event-stream',
@@ -261,7 +261,7 @@ class PluginVM {
             if (blocked && !flags[blocked]) {
                 throw new Error(
                     `[vm] Plugin "${pluginId}" requests "${perm}" (unrestricted). ` +
-                    `Enable "${blocked}" in Settings → Feature Flags to allow it.`
+                    `Enable "${blocked}" in Settings -> Feature Flags to allow it.`
                 );
             }
         }
