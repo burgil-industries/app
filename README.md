@@ -9,7 +9,7 @@ This repository contains the files that are **written to the user's machine** at
 
 ## How it works
 
-`build.ps1` (in the root repo) processes `installer/main.ps1`, which contains:
+[`build.ps1`](https://github.com/burgil-industries/computer/blob/main/build.ps1) (in the root repo) processes [`installer/main.ps1`](https://github.com/burgil-industries/installer/blob/main/main.ps1), which contains:
 
 ```
 {{EMBED_DIR:app}}
@@ -30,14 +30,14 @@ Variable naming rule: `FILE_` + relative path with `/`, `\`, `.`, `-` replaced b
 
 ## What to edit
 
-Edit files here to change what ends up on the user's machine. Then run `build.ps1` from the root repo to regenerate `public/install.ps1`.
+Edit files here to change what ends up on the user's machine. Then run [`build.ps1`](https://github.com/burgil-industries/computer/blob/main/build.ps1) from the root repo to regenerate [`public/install.ps1`](https://github.com/burgil-industries/public/blob/main/install.ps1).
 
 ```powershell
 # From the computer/ root:
 .\build.ps1
 ```
 
-Do **not** edit `public/install.ps1` directly - it is a generated file and will be overwritten.
+Do **not** edit [`public/install.ps1`](https://github.com/burgil-industries/public/blob/main/install.ps1) directly - it is a generated file and will be overwritten.
 
 ## Layout
 
