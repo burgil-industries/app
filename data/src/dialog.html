@@ -33,7 +33,7 @@
 
   body { display: flex; flex-direction: column; overflow: hidden; }
 
-  /* ── Header ─────────────────────────────────────────────────────────── */
+  /* -- Header ----------------------------------------------------------- */
   .header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
@@ -104,7 +104,7 @@
     text-overflow: ellipsis;
   }
 
-  /* ── Bundle plugin pills ─────────────────────────────────────────────── */
+  /* -- Bundle plugin pills ----------------------------------------------- */
   .plugin-pills {
     display: flex;
     flex-wrap: wrap;
@@ -122,7 +122,7 @@
     background: var(--surface-3);
   }
 
-  /* ── Permission list ─────────────────────────────────────────────────── */
+  /* -- Permission list --------------------------------------------------- */
   .body {
     flex: 1;
     overflow-y: auto;
@@ -208,7 +208,15 @@
     max-width: 100%;
   }
 
-  /* ── Footer ──────────────────────────────────────────────────────────── */
+  .perm-reason {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 5px;
+    line-height: 1.45;
+    opacity: .85;
+  }
+
+  /* -- Footer ------------------------------------------------------------ */
   .footer {
     border-top: 1px solid var(--border);
     padding: 10px 18px 12px;
@@ -247,7 +255,7 @@
   }
   .btn-allow:hover:not(:disabled) { opacity: .88; }
 
-  /* ── Done state ──────────────────────────────────────────────────────── */
+  /* -- Done state -------------------------------------------------------- */
   .done-overlay {
     display: none;
     position: fixed;
@@ -344,13 +352,15 @@ function truncateScope(scope) {
   return '...' + sep + parts.slice(-3).join(sep);
 }
 
-function renderPerm(perm, container) {
+function renderPerm(perm, container, reasons) {
   const colon = perm.indexOf(':');
   const base  = colon === -1 ? perm : perm.slice(0, colon);
   const scope = colon === -1 ? null  : perm.slice(colon + 1);
 
-  const icon = ICONS[base] || DEFAULT_ICON;
-  const desc = PERM_DESCRIPTIONS[base] || base;
+  const icon   = ICONS[base] || DEFAULT_ICON;
+  const desc   = PERM_DESCRIPTIONS[base] || base;
+  // Exact match first, then fall back to base type (e.g. "fs.read")
+  const reason = reasons && (reasons[perm] || reasons[base]) || null;
 
   const item = document.createElement('div');
   item.className = 'perm-item';
@@ -358,7 +368,8 @@ function renderPerm(perm, container) {
     `<span class="perm-icon">${icon}</span>` +
     `<div class="perm-text">` +
       `<div class="perm-label">${desc}</div>` +
-      (scope ? `<div class="perm-scope">${truncateScope(scope)}</div>` : '') +
+      (scope  ? `<div class="perm-scope">${truncateScope(scope)}</div>` : '') +
+      (reason ? `<div class="perm-reason">${reason}</div>` : '') +
     `</div>`;
   container.appendChild(item);
 }
@@ -400,13 +411,13 @@ if (data.type === 'bundle') {
     grp.textContent = plugin.name;
     list.appendChild(grp);
     for (const perm of plugin.permissions) {
-      renderPerm(perm, list);
+      renderPerm(perm, list, plugin.permReasons);
     }
   }
 } else {
   // Single plugin - flat list
   for (const perm of data.permissions) {
-    renderPerm(perm, list);
+    renderPerm(perm, list, data.permReasons);
   }
 }
 

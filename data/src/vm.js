@@ -32,7 +32,8 @@ class PluginVM {
         this.dataDir      = options.dataDir;
         this.appName      = options.appName    || 'Computer';
         this.appVersion   = options.appVersion || '1.0.0';
-        this._services    = new Map();   // name -> value (provided by plugins)
+        this._services         = new Map();   // name -> value (provided by plugins)
+        this._serviceProviders = new Map();   // service name -> pluginId that provided it
         this._loaded      = [];          // plugin/bundle IDs loaded in this session
         this._pluginMetas = new Map();   // pluginId -> plugin.json contents
         this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
@@ -130,12 +131,12 @@ class PluginVM {
             };
 
             const timeout = setTimeout(() => {
-                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" — denying`);
+                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" - denying`);
                 settle(false);
             }, 2 * 60 * 1000);
 
             const server = http.createServer((req, res) => {
-                // ── Favicon ────────────────────────────────────────────────────
+                // -- Favicon ----------------------------------------------------
                 if (req.url === '/favicon.ico') {
                     try {
                         res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'no-cache' });
@@ -144,7 +145,7 @@ class PluginVM {
                     return;
                 }
 
-                // ── SSE endpoint — stays open while the dialog window is open ──
+                // -- SSE endpoint - stays open while the dialog window is open --
                 // When the window closes, this connection drops → settle(false).
                 if (req.method === 'GET' && req.url === '/sse') {
                     res.writeHead(200, {
@@ -167,14 +168,14 @@ class PluginVM {
                     return;
                 }
 
-                // ── Serve the dialog HTML ──────────────────────────────────────
+                // -- Serve the dialog HTML --------------------------------------
                 if (req.method === 'GET' && req.url === '/') {
                     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                     res.end(html);
                     return;
                 }
 
-                // ── Receive the Allow / Deny click ─────────────────────────────
+                // -- Receive the Allow / Deny click -----------------------------
                 if (req.method === 'POST' && req.url === '/result') {
                     let body = '';
                     req.on('data', chunk => { body += chunk; });
@@ -213,6 +214,15 @@ class PluginVM {
 
         const winH = Math.min(Math.max(206 + requested.length * 54, 290), 500);
 
+        // Expand ${dataDir} and ${pluginDataDir} in reason keys so they match expanded perms
+        const pluginDataDir = path.join(this.dataDir, 'plugins', pluginId);
+        const expandedReasons = {};
+        for (const [k, v] of Object.entries(meta.permissionReasons || {})) {
+            expandedReasons[k
+                .replace('${dataDir}', this.dataDir)
+                .replace('${pluginDataDir}', pluginDataDir)] = v;
+        }
+
         const dialogData = {
             type            : 'plugin',
             appName         : this.appName,
@@ -221,6 +231,7 @@ class PluginVM {
             description     : meta.description || '',
             permissions     : requested,
             permDescriptions: PERM_DESCRIPTIONS,
+            permReasons     : expandedReasons,
         };
 
         const granted = await this._showPermDialog(dialogData, 420, winH);
@@ -246,13 +257,24 @@ class PluginVM {
         if (!anyMissing) return true;
 
         const groups = memberMetas
-            .map(meta => ({
-                id          : meta.id,
-                name        : meta.name || meta.id,
-                permissions : (meta.permissions || []).map(p =>
-                    p.replace('${dataDir}', this.dataDir)
-                ),
-            }))
+            .map(meta => {
+                const pluginDataDir = path.join(this.dataDir, 'plugins', meta.id);
+                const expandedReasons = {};
+                for (const [k, v] of Object.entries(meta.permissionReasons || {})) {
+                    expandedReasons[k
+                        .replace('${dataDir}', this.dataDir)
+                        .replace('${pluginDataDir}', pluginDataDir)] = v;
+                }
+                return {
+                    id          : meta.id,
+                    name        : meta.name || meta.id,
+                    permissions : (meta.permissions || []).map(p =>
+                        p.replace('${dataDir}', this.dataDir)
+                         .replace('${pluginDataDir}', pluginDataDir)
+                    ),
+                    permReasons : expandedReasons,
+                };
+            })
             .filter(g => g.permissions.length > 0);
 
         const totalPerms   = groups.reduce((n, g) => n + g.permissions.length, 0);
@@ -444,7 +466,7 @@ class PluginVM {
 
     // -- Sandbox context builder -----------------------------------------------
 
-    _buildCtx(pluginId, grantedPerms, pluginDir) {
+    _buildCtx(pluginId, grantedPerms, pluginDir, meta) {
         const self = this;
 
         const scopeRoots = (base) => {
@@ -529,7 +551,7 @@ class PluginVM {
                 }
                 return global.fetch
                     ? global.fetch(url, options)
-                    : Promise.reject(new Error('fetch not available — upgrade Node.js to v18+'));
+                    : Promise.reject(new Error('fetch not available - upgrade Node.js to v18+'));
             },
 
             exec(cmd, args = []) {
@@ -586,17 +608,43 @@ class PluginVM {
             provide(name, value) {
                 if (!has('ctx.provide')) throw new Error('Permission denied: ctx.provide not granted');
                 self._services.set(name, value);
+                self._serviceProviders.set(name, pluginId);
             },
 
             use(name) {
-                // The built-in 'vm' management service requires vm.manage permission
-                if (name === 'vm' && !has('vm.manage')) {
-                    throw new Error('Permission denied: vm.manage not granted — declare it in plugin.json to access VM control');
+                // The built-in 'vm' service is gated by the vm.manage permission
+                if (name === 'vm') {
+                    if (!has('vm.manage')) {
+                        throw new Error('Permission denied: vm.manage not granted - declare it in plugin.json to access VM control');
+                    }
+                } else {
+                    // Access gate: caller must declare the providing plugin as a dependency
+                    const providerId = self._serviceProviders.get(name);
+                    if (providerId) {
+                        const deps = Object.keys(meta.dependencies || {});
+                        if (!deps.includes(providerId)) {
+                            throw new Error(
+                                `Plugin "${pluginId}" used service "${name}" (from "${providerId}") ` +
+                                `without declaring "${providerId}" as a dependency in plugin.json`
+                            );
+                        }
+                    }
                 }
                 if (!self._services.has(name)) {
-                    throw new Error(`Service "${name}" not found — is the plugin that provides it loaded?`);
+                    throw new Error(`Service "${name}" not found - is the plugin that provides it loaded?`);
                 }
-                return self._services.get(name);
+                const service = self._services.get(name);
+                // Function filtering: "uses": { "log": ["info", "warn"] } in plugin.json
+                const allowed = (meta.uses || {})[name];
+                if (Array.isArray(allowed) && allowed.length > 0 &&
+                    typeof service === 'object' && service !== null) {
+                    return Object.fromEntries(
+                        allowed
+                            .filter(fn => typeof service[fn] === 'function')
+                            .map(fn => [fn, service[fn].bind(service)])
+                    );
+                }
+                return service;
             },
 
             broadcast(msg) {
@@ -633,7 +681,7 @@ class PluginVM {
             require(id) {
                 if (ALLOWED_BUILTINS.has(id)) return require(id);
                 throw new Error(
-                    `[vm] Plugin "${meta.id}" tried to require("${id}") — ` +
+                    `[vm] Plugin "${meta.id}" tried to require("${id}") - ` +
                     `use the ctx API instead or request the appropriate permission.`
                 );
             },
@@ -654,14 +702,16 @@ class PluginVM {
         const metaPath = path.join(pluginDir, 'plugin.json');
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 
+        const pluginDataDir = path.join(this.dataDir, 'plugins', meta.id);
         const requested = (meta.permissions || []).map(p =>
             p.replace('${dataDir}', this.dataDir)
+             .replace('${pluginDataDir}', pluginDataDir)
         );
 
         console.log(`[vm] loading "${meta.id}" (${meta.name || meta.id})`);
 
         const grantedPerms = await this._checkPermissions(meta.id, meta, requested);
-        const ctx = this._buildCtx(meta.id, grantedPerms, pluginDir);
+        const ctx = this._buildCtx(meta.id, grantedPerms, pluginDir, meta);
 
         fs.mkdirSync(ctx.dataDir, { recursive: true });
         this._runPlugin(pluginDir, meta, ctx);
@@ -688,7 +738,7 @@ class PluginVM {
             return;
         }
 
-        // ── Snapshot current folders ──────────────────────────────────────────
+        // -- Snapshot current folders ------------------------------------------
         const presentFolders = new Set(
             fs.readdirSync(this.pluginsDir).filter(e => {
                 try { return fs.statSync(path.join(this.pluginsDir, e)).isDirectory(); }
@@ -696,15 +746,15 @@ class PluginVM {
             })
         );
 
-        // ── Mark removed items ────────────────────────────────────────────────
+        // -- Mark removed items ------------------------------------------------
         for (const [id, entry] of Object.entries(cache)) {
             if (entry.status !== 'removed' && entry.folder && !presentFolders.has(entry.folder)) {
-                console.log(`[vm] "${id}" folder removed — will re-try if added back`);
+                console.log(`[vm] "${id}" folder removed - will re-try if added back`);
                 cache[id] = { ...entry, status: 'removed' };
             }
         }
 
-        // ── Separate bundles from plugins ─────────────────────────────────────
+        // -- Separate bundles from plugins -------------------------------------
         const bundleManifests = {};
         const pluginManifests = {};
 
@@ -738,10 +788,10 @@ class PluginVM {
             if (entry.status === 'removed')  return true;
             if (entry.status === 'loaded')   return true;   // new session
             if (entry.status === 'disabled') return false;  // explicitly disabled
-            return false;                                   // denied / error — wait for drag cycle
+            return false;                                   // denied / error - wait for drag cycle
         };
 
-        // ── Load bundles first ────────────────────────────────────────────────
+        // -- Load bundles first ------------------------------------------------
         for (const bundleId of Object.keys(bundleManifests)) {
             if (!shouldLoad(bundleId)) continue;
             const bundleMeta = bundleManifests[bundleId];
@@ -760,7 +810,7 @@ class PluginVM {
             }
         }
 
-        // ── Topological async load of standalone plugins ──────────────────────
+        // -- Topological async load of standalone plugins ----------------------
         const visited = new Set();
         const load = async (id) => {
             if (visited.has(id)) return;
@@ -814,6 +864,7 @@ class PluginVM {
     async loadAll() {
         // Register the built-in VM control service before plugins load,
         // so plugins declared with vm.manage permission can use it immediately.
+        this._serviceProviders.set('vm', '__builtin__');
         this._services.set('vm', {
             getAll         : ()     => this.getAllPlugins(),
             getDependents  : (id)   => this.getAllDependents(id),
