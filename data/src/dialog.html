@@ -410,6 +410,12 @@ if (data.type === 'bundle') {
   }
 }
 
+// Keep an SSE connection alive so the server knows when this window closes.
+// Edge closes the normal HTTP keep-alive connection right after page load,
+// so the old req.socket 'close' trick fires immediately (before you click).
+// An SSE stream stays open for the entire lifetime of the page.
+new EventSource('/sse');
+
 async function answer(granted) {
   document.getElementById('btn-deny').disabled  = true;
   document.getElementById('btn-allow').disabled = true;

@@ -3,7 +3,7 @@ const vm     = require('vm');
 const fs     = require('fs');
 const path   = require('path');
 const http   = require('http');
-const { exec, spawn } = require('child_process');
+const { exec, execFileSync, spawn } = require('child_process');
 
 // -- Permission metadata -------------------------------------------------------
 const PERM_DESCRIPTIONS = {
@@ -14,6 +14,7 @@ const PERM_DESCRIPTIONS = {
     'system.exec'    : 'Run system commands',
     'ctx.provide'    : 'Provide services to other plugins',
     'ctx.broadcast'  : 'Send messages to all connected clients',
+    'vm.manage'      : 'Manage plugins (enable, disable, reload)',
 };
 
 // -- Plugin VM -----------------------------------------------------------------
@@ -27,24 +28,20 @@ class PluginVM {
      * }} options
      */
     constructor(options) {
-        this.pluginsDir  = options.pluginsDir;
-        this.dataDir     = options.dataDir;
-        this.appName     = options.appName    || 'Computer';
-        this.appVersion  = options.appVersion || '1.0.0';
-        this._services   = new Map();   // name -> value (provided by plugins)
-        this._loaded     = [];          // plugin/bundle IDs loaded in this session
-        this._syncing    = false;       // mutex: prevents concurrent _syncPlugins calls
+        this.pluginsDir   = options.pluginsDir;
+        this.dataDir      = options.dataDir;
+        this.appName      = options.appName    || 'Computer';
+        this.appVersion   = options.appVersion || '1.0.0';
+        this._services    = new Map();   // name -> value (provided by plugins)
+        this._loaded      = [];          // plugin/bundle IDs loaded in this session
+        this._pluginMetas = new Map();   // pluginId -> plugin.json contents
+        this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
     }
 
     // -- Plugin cache (data/plugins-cache.json) --------------------------------
-    // Tracks per-plugin/bundle status across restarts so denied/broken items
-    // aren't re-prompted on every launch - only after a drag-out + drag-back.
-    //
-    // Schema: { [id]: { status: "loaded"|"denied"|"error"|"removed", folder?: string, type?: "bundle" } }
+    // Schema: { [id]: { status: "loaded"|"denied"|"error"|"removed"|"disabled", folder?, type? } }
 
-    _cacheFile() {
-        return path.join(this.dataDir, 'plugins-cache.json');
-    }
+    _cacheFile() { return path.join(this.dataDir, 'plugins-cache.json'); }
 
     _loadCache() {
         try { return JSON.parse(fs.readFileSync(this._cacheFile(), 'utf8')); }
@@ -103,16 +100,20 @@ class PluginVM {
     }
 
     /**
-     * Show the permission dialog in Edge and resolve when the user responds
-     * or closes the window.
+     * Show the permission dialog and resolve when the user responds or closes.
      *
-     * @param {object} dialogData  - Fully-formed data object injected into dialog.html
+     * Window-close detection uses a persistent SSE connection (/sse) instead of
+     * the socket close event on the GET / request.  Edge closes the keep-alive
+     * HTTP connection right after loading the page, which caused the old
+     * req.socket 'close' handler to fire immediately (before the user clicked
+     * anything).  The SSE stream stays alive for the entire lifetime of the page.
+     *
+     * @param {object} dialogData  Fully-formed data object injected into dialog.html
      * @param {number} [winW=420]
      * @param {number} [winH=380]
      * @returns {Promise<boolean>} true = granted, false = denied/closed
      */
     _showPermDialog(dialogData, winW = 420, winH = 380) {
-        // App icon served as /favicon.ico
         const iconPath = path.join(this.dataDir, 'assets', `${this.appName.toLowerCase()}.ico`);
 
         return new Promise((resolve) => {
@@ -128,9 +129,8 @@ class PluginVM {
                 resolve(granted);
             };
 
-            // Auto-deny if the user never responds (e.g. killed the process)
             const timeout = setTimeout(() => {
-                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" - denying`);
+                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" — denying`);
                 settle(false);
             }, 2 * 60 * 1000);
 
@@ -140,25 +140,36 @@ class PluginVM {
                     try {
                         res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'no-cache' });
                         res.end(fs.readFileSync(iconPath));
-                    } catch (_) {
-                        res.writeHead(204); res.end();
-                    }
+                    } catch (_) { res.writeHead(204); res.end(); }
+                    return;
+                }
+
+                // ── SSE endpoint — stays open while the dialog window is open ──
+                // When the window closes, this connection drops → settle(false).
+                if (req.method === 'GET' && req.url === '/sse') {
+                    res.writeHead(200, {
+                        'Content-Type' : 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Connection'   : 'keep-alive',
+                    });
+                    res.write('data: connected\n\n');
+
+                    const hb = setInterval(() => {
+                        try { res.write(':ping\n\n'); }
+                        catch (_) { clearInterval(hb); }
+                    }, 25000);
+
+                    req.socket.once('close', () => {
+                        clearInterval(hb);
+                        // Small delay so any in-flight POST /result still wins
+                        setTimeout(() => settle(false), 500);
+                    });
                     return;
                 }
 
                 // ── Serve the dialog HTML ──────────────────────────────────────
                 if (req.method === 'GET' && req.url === '/') {
-                    // Detect window close: if the socket drops before a POST /result
-                    // arrives, treat it as Deny (with a small delay so a POST that
-                    // arrives on the same keep-alive connection still wins).
-                    req.socket.once('close', () => {
-                        setTimeout(() => settle(false), 300);
-                    });
-
-                    res.writeHead(200, {
-                        'Content-Type': 'text/html; charset=utf-8',
-                        'Connection'  : 'keep-alive',
-                    });
+                    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                     res.end(html);
                     return;
                 }
@@ -170,19 +181,14 @@ class PluginVM {
                     req.on('end', () => {
                         try {
                             const { granted } = JSON.parse(body);
-                            res.writeHead(200);
-                            res.end();
+                            res.writeHead(200); res.end();
                             settle(!!granted);
-                        } catch (_) {
-                            res.writeHead(400);
-                            res.end();
-                        }
+                        } catch (_) { res.writeHead(400); res.end(); }
                     });
                     return;
                 }
 
-                res.writeHead(404);
-                res.end();
+                res.writeHead(404); res.end();
             });
 
             server.listen(0, '127.0.0.1', () => {
@@ -203,9 +209,8 @@ class PluginVM {
         if (!requested || requested.length === 0) return new Set();
 
         const saved = this._loadSavedPerms(pluginId);
-        if (saved !== null) return saved;   // already decided
+        if (saved !== null) return saved;
 
-        // Height: header(90) + section(28) + items(54 each) + footer(52) + chrome(36)
         const winH = Math.min(Math.max(206 + requested.length * 54, 290), 500);
 
         const dialogData = {
@@ -231,7 +236,6 @@ class PluginVM {
     // -- Bundle permission check (merged dialog for all members) ---------------
 
     async _checkBundlePermissions(bundleMeta, memberMetas) {
-        // Only show the dialog if at least one member is missing saved perms
         const anyMissing = memberMetas.some(meta => {
             const requested = (meta.permissions || []).map(p =>
                 p.replace('${dataDir}', this.dataDir)
@@ -239,9 +243,8 @@ class PluginVM {
             return requested.length > 0 && this._loadSavedPerms(meta.id) === null;
         });
 
-        if (!anyMissing) return true;   // all already decided - silent load
+        if (!anyMissing) return true;
 
-        // Build groups for the dialog
         const groups = memberMetas
             .map(meta => ({
                 id          : meta.id,
@@ -269,7 +272,6 @@ class PluginVM {
         const granted = await this._showPermDialog(dialogData, 440, winH);
         if (!granted) return false;
 
-        // Save permissions for every member
         for (const meta of memberMetas) {
             const requested = (meta.permissions || []).map(p =>
                 p.replace('${dataDir}', this.dataDir)
@@ -303,14 +305,12 @@ class PluginVM {
 
         const granted = await this._checkBundlePermissions(bundleMeta, memberMetas);
         if (!granted) {
-            // Mark each member denied in cache too
             for (const meta of memberMetas) {
                 cache[meta.id] = { status: 'denied', folder: meta._folder };
             }
             throw new Error(`[vm] Bundle "${bundleMeta.id}" denied by user`);
         }
 
-        // Load each member in declaration order (respecting already-loaded deps)
         for (const meta of memberMetas) {
             if (this._loaded.includes(meta.id)) continue;
             try {
@@ -321,6 +321,125 @@ class PluginVM {
                 cache[meta.id] = { status: 'error', folder: meta._folder, error: e.message };
             }
         }
+    }
+
+    // -- Management API (exposed as the 'vm' service) --------------------------
+
+    /**
+     * Returns the full plugin/bundle list from disk, annotated with live status.
+     */
+    getAllPlugins() {
+        const cache = this._loadCache();
+        const result = [];
+
+        if (!fs.existsSync(this.pluginsDir)) return result;
+
+        const folders = fs.readdirSync(this.pluginsDir).filter(e => {
+            try { return fs.statSync(path.join(this.pluginsDir, e)).isDirectory(); }
+            catch (_) { return false; }
+        });
+
+        for (const folder of folders) {
+            const dir        = path.join(this.pluginsDir, folder);
+            const bundleFile = path.join(dir, 'bundle.json');
+            const pluginFile = path.join(dir, 'plugin.json');
+
+            if (fs.existsSync(bundleFile)) {
+                try {
+                    const meta  = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
+                    const entry = cache[meta.id] || {};
+                    result.push({
+                        id: meta.id, name: meta.name || meta.id,
+                        version: meta.version || '', description: meta.description || '',
+                        type: 'bundle', members: meta.plugins || [],
+                        dependencies: [], permissions: [], dependents: [],
+                        status: entry.status || 'new',
+                        loaded: this._loaded.includes(meta.id),
+                    });
+                } catch (_) {}
+            } else if (fs.existsSync(pluginFile)) {
+                try {
+                    const meta  = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
+                    const entry = cache[meta.id] || {};
+                    result.push({
+                        id: meta.id, name: meta.name || meta.id,
+                        version: meta.version || '', description: meta.description || '',
+                        type: 'plugin',
+                        dependencies: Object.keys(meta.dependencies || {}),
+                        permissions: meta.permissions || [], dependents: [],
+                        status: entry.status || 'new',
+                        loaded: this._loaded.includes(meta.id),
+                    });
+                } catch (_) {}
+            }
+        }
+
+        // Fill in dependents: which other plugins list this one as a dependency
+        for (const p of result) {
+            p.dependents = result
+                .filter(q => q.dependencies.includes(p.id))
+                .map(q => q.id);
+        }
+
+        return result;
+    }
+
+    /**
+     * Returns a deep list of all plugin IDs that (transitively) depend on `id`.
+     */
+    getAllDependents(id) {
+        const plugins = this.getAllPlugins();
+        const direct = (x) => plugins.filter(p => p.dependencies.includes(x)).map(p => p.id);
+        const visited = new Set();
+        const walk = (x) => {
+            if (visited.has(x)) return;
+            visited.add(x);
+            for (const d of direct(x)) walk(d);
+        };
+        walk(id);
+        visited.delete(id);
+        return [...visited];
+    }
+
+    /**
+     * Mark a plugin as disabled. Effect is permanent but only fully takes effect
+     * on next restart (we can't unload running plugin code).
+     */
+    disablePlugin(id) {
+        const cache = this._loadCache();
+        cache[id] = { ...(cache[id] || {}), status: 'disabled' };
+        this._saveCache(cache);
+        return { ok: true, restart_required: this._loaded.includes(id) };
+    }
+
+    /**
+     * Re-enable a disabled/denied/errored plugin and immediately try to load it.
+     */
+    async enablePlugin(id) {
+        const cache = this._loadCache();
+        const existing = cache[id] || {};
+        cache[id] = { status: 'loaded', ...(existing.folder ? { folder: existing.folder } : {}) };
+        this._saveCache(cache);
+        if (!this._loaded.includes(id)) {
+            await this._syncPlugins();
+        }
+        return { ok: true, loaded: this._loaded.includes(id) };
+    }
+
+    /**
+     * Delete saved permissions and re-prompt on next load attempt.
+     */
+    async resetPluginPerms(id) {
+        try { fs.unlinkSync(this._permsFile(id)); } catch (_) {}
+        const cache = this._loadCache();
+        const existing = cache[id] || {};
+        // If it was loaded before, mark as 'loaded' but without saved perms it will re-prompt
+        cache[id] = { status: 'loaded', ...(existing.folder ? { folder: existing.folder } : {}) };
+        this._saveCache(cache);
+        // Remove from _loaded so the sync will attempt to re-run it (and re-prompt)
+        this._loaded = this._loaded.filter(x => x !== id);
+        await this._syncPlugins();
+        return { ok: true };
     }
 
     // -- Sandbox context builder -----------------------------------------------
@@ -408,8 +527,9 @@ class PluginVM {
                         if (e.message.startsWith('Permission denied')) throw e;
                     }
                 }
-                return global.fetch ? global.fetch(url, options)
-                    : Promise.reject(new Error('fetch not available in this Node version'));
+                return global.fetch
+                    ? global.fetch(url, options)
+                    : Promise.reject(new Error('fetch not available — upgrade Node.js to v18+'));
             },
 
             exec(cmd, args = []) {
@@ -417,11 +537,10 @@ class PluginVM {
                 const allowed = [...grantedPerms]
                     .filter(p => p.startsWith('system.exec:'))
                     .map(p => p.split(':')[1]);
-                const cmdBase = cmd.trim().split(/\s+/)[0].toLowerCase();
+                const cmdBase = path.basename(cmd).replace(/\.exe$/i, '').toLowerCase();
                 if (allowed.length > 0 && !allowed.includes(cmdBase)) {
                     throw new Error(`Permission denied: system.exec for "${cmdBase}" not granted`);
                 }
-                const { execFileSync } = require('child_process');
                 return execFileSync(cmd, args, { encoding: 'utf8' });
             },
 
@@ -441,13 +560,41 @@ class PluginVM {
                 );
             },
 
+            /**
+             * Launch a detached background process (fire-and-forget).
+             * Requires system.exec permission for the target command.
+             */
+            spawnDetached(cmd, args = [], opts = {}) {
+                if (!has('system.exec')) throw new Error('Permission denied: system.exec not granted');
+                const allowed = [...grantedPerms]
+                    .filter(p => p.startsWith('system.exec:'))
+                    .map(p => p.split(':')[1]);
+                const cmdBase = path.basename(cmd).replace(/\.exe$/i, '').toLowerCase();
+                if (allowed.length > 0 && !allowed.includes(cmdBase)) {
+                    throw new Error(`Permission denied: system.exec for "${cmdBase}" not granted`);
+                }
+                const child = spawn(cmd, args, {
+                    detached   : true,
+                    stdio      : 'ignore',
+                    windowsHide: true,
+                    ...opts,
+                });
+                child.unref();
+                return child.pid;
+            },
+
             provide(name, value) {
                 if (!has('ctx.provide')) throw new Error('Permission denied: ctx.provide not granted');
                 self._services.set(name, value);
             },
+
             use(name) {
+                // The built-in 'vm' management service requires vm.manage permission
+                if (name === 'vm' && !has('vm.manage')) {
+                    throw new Error('Permission denied: vm.manage not granted — declare it in plugin.json to access VM control');
+                }
                 if (!self._services.has(name)) {
-                    throw new Error(`Service "${name}" not found - is the plugin that provides it loaded?`);
+                    throw new Error(`Service "${name}" not found — is the plugin that provides it loaded?`);
                 }
                 return self._services.get(name);
             },
@@ -486,7 +633,7 @@ class PluginVM {
             require(id) {
                 if (ALLOWED_BUILTINS.has(id)) return require(id);
                 throw new Error(
-                    `[vm] Plugin "${meta.id}" tried to require("${id}") - ` +
+                    `[vm] Plugin "${meta.id}" tried to require("${id}") — ` +
                     `use the ctx API instead or request the appropriate permission.`
                 );
             },
@@ -518,29 +665,19 @@ class PluginVM {
 
         fs.mkdirSync(ctx.dataDir, { recursive: true });
         this._runPlugin(pluginDir, meta, ctx);
+
         this._loaded.push(meta.id);
+        this._pluginMetas.set(meta.id, meta);   // track for dependency graph
         console.log(`[vm] "${meta.id}" loaded`);
     }
 
     // -- _syncPlugins: scan folder, update cache, load new plugins/bundles -----
-    //
-    // Cache status meanings:
-    //   "loaded"  - successfully loaded (this session or a prior one)
-    //   "denied"  - user closed the dialog or clicked Deny
-    //   "error"   - plugin/bundle threw during load
-    //   "removed" - folder was deleted; cleared when folder comes back
-    //
-    // A "denied" or "error" item is NOT retried until it has been removed
-    // (status → "removed") and then re-added, forcing a fresh attempt.
 
     async _syncPlugins() {
         if (this._syncing) return;
         this._syncing = true;
-        try {
-            await this.__doSync();
-        } finally {
-            this._syncing = false;
-        }
+        try { await this.__doSync(); }
+        finally { this._syncing = false; }
     }
 
     async __doSync() {
@@ -553,22 +690,23 @@ class PluginVM {
 
         // ── Snapshot current folders ──────────────────────────────────────────
         const presentFolders = new Set(
-            fs.readdirSync(this.pluginsDir).filter(e =>
-                fs.statSync(path.join(this.pluginsDir, e)).isDirectory()
-            )
+            fs.readdirSync(this.pluginsDir).filter(e => {
+                try { return fs.statSync(path.join(this.pluginsDir, e)).isDirectory(); }
+                catch (_) { return false; }
+            })
         );
 
         // ── Mark removed items ────────────────────────────────────────────────
         for (const [id, entry] of Object.entries(cache)) {
             if (entry.status !== 'removed' && entry.folder && !presentFolders.has(entry.folder)) {
-                console.log(`[vm] "${id}" folder removed - will re-try if added back`);
+                console.log(`[vm] "${id}" folder removed — will re-try if added back`);
                 cache[id] = { ...entry, status: 'removed' };
             }
         }
 
         // ── Separate bundles from plugins ─────────────────────────────────────
-        const bundleManifests = {};   // bundleId -> meta
-        const pluginManifests = {};   // pluginId -> meta
+        const bundleManifests = {};
+        const pluginManifests = {};
 
         for (const folder of presentFolders) {
             const dir        = path.join(this.pluginsDir, folder);
@@ -581,29 +719,26 @@ class PluginVM {
                     meta._dir    = dir;
                     meta._folder = folder;
                     bundleManifests[meta.id] = meta;
-                } catch (e) {
-                    console.error(`[vm] skipping bundle "${folder}": ${e.message}`);
-                }
+                } catch (e) { console.error(`[vm] skipping bundle "${folder}": ${e.message}`); }
             } else if (fs.existsSync(pluginFile)) {
                 try {
                     const meta   = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
                     meta._dir    = dir;
                     meta._folder = folder;
                     pluginManifests[meta.id] = meta;
-                } catch (e) {
-                    console.error(`[vm] skipping plugin "${folder}": ${e.message}`);
-                }
+                } catch (e) { console.error(`[vm] skipping plugin "${folder}": ${e.message}`); }
             }
         }
 
-        // ── Decide whether to (re-)load each item ─────────────────────────────
+        // shouldLoad: returns true if this id should be loaded in this sync pass
         const shouldLoad = (id) => {
-            if (this._loaded.includes(id)) return false;   // already up this session
+            if (this._loaded.includes(id)) return false;
             const entry = cache[id];
-            if (!entry) return true;                        // first time ever seen
-            if (entry.status === 'removed') return true;   // came back after removal
-            if (entry.status === 'loaded')  return true;   // new session, was working
-            return false;                                   // denied/error - wait for drag cycle
+            if (!entry) return true;
+            if (entry.status === 'removed')  return true;
+            if (entry.status === 'loaded')   return true;   // new session
+            if (entry.status === 'disabled') return false;  // explicitly disabled
+            return false;                                   // denied / error — wait for drag cycle
         };
 
         // ── Load bundles first ────────────────────────────────────────────────
@@ -616,10 +751,12 @@ class PluginVM {
                 cache[bundleId] = { status: 'loaded', folder: bundleMeta._folder, type: 'bundle' };
             } catch (e) {
                 const denied = e.message.includes('denied by user');
-                const status = denied ? 'denied' : 'error';
                 console.log(`[vm] bundle "${bundleId}" ${denied ? 'denied by user' : 'failed: ' + e.message}`);
-                cache[bundleId] = { status, folder: bundleMeta._folder, type: 'bundle',
-                    ...(denied ? {} : { error: e.message }) };
+                cache[bundleId] = {
+                    status: denied ? 'denied' : 'error',
+                    folder: bundleMeta._folder, type: 'bundle',
+                    ...(denied ? {} : { error: e.message }),
+                };
             }
         }
 
@@ -643,9 +780,9 @@ class PluginVM {
                 cache[id] = { status: 'loaded', folder: meta._folder };
             } catch (e) {
                 const denied = e.message.includes('Permission denied by user');
-                const status = denied ? 'denied' : 'error';
                 console.log(`[vm] "${id}" ${denied ? 'denied by user' : 'failed: ' + e.message}`);
-                cache[id] = { status, folder: meta._folder, ...(denied ? {} : { error: e.message }) };
+                cache[id] = { status: denied ? 'denied' : 'error', folder: meta._folder,
+                    ...(denied ? {} : { error: e.message }) };
             }
         };
 
@@ -675,6 +812,17 @@ class PluginVM {
     // -- Public API ------------------------------------------------------------
 
     async loadAll() {
+        // Register the built-in VM control service before plugins load,
+        // so plugins declared with vm.manage permission can use it immediately.
+        this._services.set('vm', {
+            getAll         : ()     => this.getAllPlugins(),
+            getDependents  : (id)   => this.getAllDependents(id),
+            disable        : (id)   => this.disablePlugin(id),
+            enable         : (id)   => this.enablePlugin(id),
+            resetPerms     : (id)   => this.resetPluginPerms(id),
+            getLoaded      : ()     => [...this._loaded],
+        });
+
         await this._syncPlugins();
         this.watchPlugins();
     }
