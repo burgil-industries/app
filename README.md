@@ -47,5 +47,5 @@ data/
   src/          Application source (app.js, app.py, permissions.js)
   plugins.json  Installed plugins manifest
 __APP_NAME__.cmd  Launcher stub (name filled in at install time)
-LICENSE.txt
+LICENSE
 ```
