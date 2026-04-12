@@ -23,7 +23,6 @@ This directive reads every file under `app/` and encodes each one as a PowerShel
 |---|---|---|
 | `data/lib/router.ps1` | `$FILE_DATA_LIB_ROUTER_PS1` | `<install_dir>/data/lib/router.ps1` |
 | `data/src/app.js` | `$FILE_DATA_SRC_APP_JS` | `<install_dir>/data/src/app.js` |
-| `data/plugins.json` | `$FILE_DATA_PLUGINS_JSON` | `<install_dir>/data/plugins.json` |
 | `__APP_NAME__.cmd` | `$FILE___APP_NAME___CMD` | `<install_dir>/__APP_NAME__.cmd` |
 
 Variable naming rule: `FILE_` + relative path with `/`, `\`, `.`, `-` replaced by `_`, uppercased.
@@ -45,7 +44,6 @@ Do **not** edit [`public/install.ps1`](https://github.com/burgil-industries/publ
 data/
   lib/          Runtime scripts (router, updater, uninstaller, startup hooks)
   src/          Application source (app.js, app.py, permissions.js)
-  plugins.json  Installed plugins manifest
 __APP_NAME__.cmd  Launcher stub (name filled in at install time)
 LICENSE
 ```
