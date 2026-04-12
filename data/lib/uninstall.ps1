@@ -1,3 +1,4 @@
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 param([string]$PresetInstallDir = "")
 
 $AppName    = '__APP_NAME__'

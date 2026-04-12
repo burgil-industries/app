@@ -123,14 +123,6 @@
   }
 
   /* -- Permission list --------------------------------------------------- */
-  .body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 11px 18px 8px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--surface-3) transparent;
-  }
-
   .body::-webkit-scrollbar { width: 5px; }
   .body::-webkit-scrollbar-track { background: transparent; }
   .body::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 3px; }
@@ -150,9 +142,17 @@
     letter-spacing: .06em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin: 8px 0 5px;
+    margin: 8px 0 2px;
     padding: 0 2px;
     opacity: .75;
+  }
+
+  .group-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+    padding: 0 2px;
+    line-height: 1.4;
   }
 
   .perm-list {
@@ -170,9 +170,44 @@
     border-radius: 9px;
     padding: 9px 12px;
     transition: border-color .15s;
+    position: relative;
   }
 
   .perm-item:hover { border-color: #333344; }
+
+  /* -- Hover tooltip ---------------------------------------------------- */
+  .perm-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--surface-3);
+    border: 1px solid #333348;
+    border-radius: 7px;
+    padding: 8px 10px;
+    z-index: 10;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+
+  .perm-item:hover .perm-tooltip { display: block; }
+
+  .perm-tooltip-raw {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: #79c0ff;
+    word-break: break-all;
+    margin-bottom: 4px;
+  }
+
+  .perm-tooltip-line {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  .perm-tooltip-line + .perm-tooltip-line { margin-top: 2px; }
 
   .perm-icon {
     width: 20px;
@@ -214,6 +249,48 @@
     margin-top: 5px;
     line-height: 1.45;
     opacity: .85;
+  }
+
+  /* -- Scroll hint ------------------------------------------------------- */
+  .body-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 11px 18px 8px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+  }
+
+  .scroll-hint {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    background: linear-gradient(to bottom, transparent, var(--bg));
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 6px;
+    pointer-events: none;
+    transition: opacity .25s;
+  }
+
+  .scroll-hint svg {
+    opacity: .55;
+    animation: bounce 1.4s ease-in-out infinite;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(4px); }
   }
 
   /* -- Footer ------------------------------------------------------------ */
@@ -299,14 +376,19 @@
   </div>
 </div>
 
-<div class="body">
-  <div class="section-label">Requests access to</div>
-  <div class="perm-list" id="perm-list"></div>
+<div class="body-wrap">
+  <div class="body" id="body-scroll">
+    <div class="section-label">Requests access to</div>
+    <div class="perm-list" id="perm-list"></div>
+  </div>
+  <div class="scroll-hint" id="scroll-hint">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
 </div>
 
 <div class="footer">
   <button class="btn-deny"  id="btn-deny"  onclick="answer(false)">Deny</button>
-  <button class="btn-allow" id="btn-allow" onclick="answer(true)">Allow</button>
+  <button class="btn-allow" id="btn-allow" onclick="answer(true)" disabled>Scroll Down</button>
 </div>
 
 <div class="done-overlay" id="done"></div>
@@ -336,6 +418,18 @@ const ICONS = {
 const DEFAULT_ICON =
   SVG('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>');
 
+// Extra technical detail shown in the hover tooltip per permission type
+const PERM_DETAILS = {
+  'fs.read'      : 'ctx.readFile(path) · ctx.readDir(path) · ctx.existsSync(path)',
+  'fs.write'     : 'ctx.writeFile(path, data)',
+  'net.listen'   : 'ctx.listen(port, handler) → http.Server',
+  'net.connect'  : 'ctx.fetch(url, options) → Promise<Response>',
+  'system.exec'  : 'ctx.exec(cmd, args) · ctx.execAsync(cmd) · ctx.spawnDetached(cmd, args)',
+  'ctx.provide'  : 'ctx.provide(name, value)  -  exposes a service other plugins can ctx.use()',
+  'ctx.broadcast': 'ctx.broadcast(msg)  -  fires vm:broadcast on the shared event bus',
+  'vm.manage'    : 'ctx.use("vm")  -  getAll · disable · enable · resetPerms · getDependents',
+};
+
 const AVATAR_COLORS = [
   ['#1e3a5f','#60a5fa'], ['#1a3a2a','#34d399'], ['#3b1f4a','#c084fc'],
   ['#3b2a10','#fbbf24'], ['#3b1a1a','#f87171'], ['#1a2f3b','#38bdf8'],
@@ -357,14 +451,26 @@ function renderPerm(perm, container, reasons) {
   const base  = colon === -1 ? perm : perm.slice(0, colon);
   const scope = colon === -1 ? null  : perm.slice(colon + 1);
 
-  const icon   = ICONS[base] || DEFAULT_ICON;
-  const desc   = PERM_DESCRIPTIONS[base] || base;
-  // Exact match first, then fall back to base type (e.g. "fs.read")
-  const reason = reasons && (reasons[perm] || reasons[base]) || null;
+  const icon    = ICONS[base] || DEFAULT_ICON;
+  const desc    = PERM_DESCRIPTIONS[base] || base;
+  const reason  = reasons && (reasons[perm] || reasons[base]) || null;
+  const detail  = PERM_DETAILS[base] || null;
+
+  // Tooltip lines
+  const tooltipLines = [];
+  if (scope) tooltipLines.push(`Scope: ${scope}`);
+  if (detail) tooltipLines.push(`API: ${detail}`);
+
+  const tooltip =
+    `<div class="perm-tooltip">` +
+      `<div class="perm-tooltip-raw">${perm}</div>` +
+      tooltipLines.map(l => `<div class="perm-tooltip-line">${l}</div>`).join('') +
+    `</div>`;
 
   const item = document.createElement('div');
   item.className = 'perm-item';
   item.innerHTML =
+    tooltip +
     `<span class="perm-icon">${icon}</span>` +
     `<div class="perm-text">` +
       `<div class="perm-label">${desc}</div>` +
@@ -376,6 +482,12 @@ function renderPerm(perm, container, reasons) {
 
 const data = JSON.parse(document.getElementById('d').textContent);
 const PERM_DESCRIPTIONS = data.permDescriptions;
+
+// Enforce intended window dimensions regardless of what the OS/browser opened.
+// window.resizeTo works in Edge/Chrome --app mode.
+if (data.winW && data.winH) {
+  try { window.resizeTo(data.winW, data.winH); } catch (_) {}
+}
 
 // Header
 document.getElementById('app-tag').textContent = data.appName;
@@ -410,6 +522,12 @@ if (data.type === 'bundle') {
     grp.className = 'group-label';
     grp.textContent = plugin.name;
     list.appendChild(grp);
+    if (plugin.description) {
+      const desc = document.createElement('div');
+      desc.className = 'group-desc';
+      desc.textContent = plugin.description;
+      list.appendChild(desc);
+    }
     for (const perm of plugin.permissions) {
       renderPerm(perm, list, plugin.permReasons);
     }
@@ -420,6 +538,30 @@ if (data.type === 'bundle') {
     renderPerm(perm, list, data.permReasons);
   }
 }
+
+// -- Scroll gate: Allow button unlocks once the user reaches the bottom --------
+const bodyEl     = document.getElementById('body-scroll');
+const hintEl     = document.getElementById('scroll-hint');
+const allowBtn   = document.getElementById('btn-allow');
+
+function checkScrolled() {
+  // scrollHeight - scrollTop - clientHeight <= threshold (2px tolerance)
+  const atBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight <= 2;
+  const canScroll = bodyEl.scrollHeight > bodyEl.clientHeight + 2;
+
+  if (!canScroll || atBottom) {
+    allowBtn.disabled   = false;
+    allowBtn.textContent = 'Allow';
+    hintEl.style.opacity = '0';
+    hintEl.style.pointerEvents = 'none';
+  } else {
+    hintEl.style.opacity = '1';
+  }
+}
+
+bodyEl.addEventListener('scroll', checkScrolled, { passive: true });
+// Check after a frame so layout is complete and scrollHeight is accurate
+requestAnimationFrame(checkScrolled);
 
 // Keep an SSE connection alive so the server knows when this window closes.
 // Edge closes the normal HTTP keep-alive connection right after page load,

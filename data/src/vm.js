@@ -1,9 +1,24 @@
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const vm     = require('vm');
 const fs     = require('fs');
 const path   = require('path');
 const http   = require('http');
 const { exec, execFileSync, spawn } = require('child_process');
+
+// -- Feature flags: broad (unscoped) permissions that require an explicit opt-in
+// Maps permission prefix -> config key that must be true to allow it.
+const FEATURE_GATED_PERMS = {
+    'system.exec'  : 'features.unrestricted_exec',
+    'net.connect'  : 'features.unrestricted_network',
+};
+
+// Safe defaults shipped with the app - all advanced features disabled.
+const FEATURE_FLAG_DEFAULTS = {
+    'features.experimental'       : false,
+    'features.unrestricted_exec'  : false,
+    'features.unrestricted_network': false,
+};
 
 // -- Permission metadata -------------------------------------------------------
 const PERM_DESCRIPTIONS = {
@@ -37,6 +52,19 @@ class PluginVM {
         this._loaded      = [];          // plugin/bundle IDs loaded in this session
         this._pluginMetas = new Map();   // pluginId -> plugin.json contents
         this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
+    }
+
+    // -- Feature flags (read from data/config.json, same file as core's Config) -
+
+    _readFeatureFlags() {
+        const cfgFile = path.join(this.dataDir, 'config.json');
+        let stored = {};
+        try { stored = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); } catch (_) {}
+        const flags = {};
+        for (const [k, def] of Object.entries(FEATURE_FLAG_DEFAULTS)) {
+            flags[k] = k in stored ? stored[k] : def;
+        }
+        return flags;
     }
 
     // -- Plugin cache (data/plugins-cache.json) --------------------------------
@@ -88,12 +116,18 @@ class PluginVM {
     _openBrowser(url, w = 420, h = 380) {
         const edge = this._findEdge();
         if (edge) {
+            // A dedicated profile dir forces Edge to open a fresh window that
+            // actually respects --window-size (ignored when a profile is already open).
+            const profileDir = path.join(this.dataDir, 'edge-dialog-profile');
             spawn(edge, [
                 `--app=${url}`,
                 `--window-size=${w},${h}`,
+                `--user-data-dir=${profileDir}`,
                 '--no-first-run',
                 '--disable-extensions',
                 '--disable-default-apps',
+                '--disable-sync',
+                '--no-default-browser-check',
             ], { detached: true, stdio: 'ignore' }).unref();
         } else {
             exec(`cmd /c start "" "${url}"`);
@@ -209,6 +243,29 @@ class PluginVM {
     async _checkPermissions(pluginId, meta, requested) {
         if (!requested || requested.length === 0) return new Set();
 
+        // -- Feature-flag gate: check opt-in flags before prompting the user ---
+        const flags = this._readFeatureFlags();
+
+        // Block experimental plugins unless the experimental flag is enabled
+        if (meta.experimental === true && !flags['features.experimental']) {
+            throw new Error(
+                `[vm] Plugin "${pluginId}" is marked experimental. ` +
+                `Enable "features.experimental" in Settings to load it.`
+            );
+        }
+
+        // Block broad (unscoped) sensitive permissions unless the flag is on.
+        // Scoped variants like "system.exec:powershell" are allowed without a flag.
+        for (const perm of requested) {
+            const blocked = FEATURE_GATED_PERMS[perm]; // exact match = unscoped
+            if (blocked && !flags[blocked]) {
+                throw new Error(
+                    `[vm] Plugin "${pluginId}" requests "${perm}" (unrestricted). ` +
+                    `Enable "${blocked}" in Settings → Feature Flags to allow it.`
+                );
+            }
+        }
+
         const saved = this._loadSavedPerms(pluginId);
         if (saved !== null) return saved;
 
@@ -232,6 +289,8 @@ class PluginVM {
             permissions     : requested,
             permDescriptions: PERM_DESCRIPTIONS,
             permReasons     : expandedReasons,
+            winW            : 420,
+            winH,
         };
 
         const granted = await this._showPermDialog(dialogData, 420, winH);
@@ -268,6 +327,7 @@ class PluginVM {
                 return {
                     id          : meta.id,
                     name        : meta.name || meta.id,
+                    description : meta.description || '',
                     permissions : (meta.permissions || []).map(p =>
                         p.replace('${dataDir}', this.dataDir)
                          .replace('${pluginDataDir}', pluginDataDir)
@@ -279,7 +339,7 @@ class PluginVM {
 
         const totalPerms   = groups.reduce((n, g) => n + g.permissions.length, 0);
         const groupHeaders = groups.length;
-        const winH = Math.min(Math.max(206 + totalPerms * 54 + groupHeaders * 26, 290), 520);
+        const winH = Math.min(Math.max(216 + totalPerms * 58 + groupHeaders * 26, 290), 520);
 
         const dialogData = {
             type            : 'bundle',
@@ -289,6 +349,8 @@ class PluginVM {
             description     : bundleMeta.description || '',
             plugins         : groups,
             permDescriptions: PERM_DESCRIPTIONS,
+            winW            : 440,
+            winH,
         };
 
         const granted = await this._showPermDialog(dialogData, 440, winH);
@@ -481,6 +543,8 @@ class PluginVM {
         };
 
         const assertPath = (base, filePath) => {
+            // Unscoped permission (e.g. "fs.read" with no path) = unrestricted access
+            if (grantedPerms.has(base)) return;
             const roots = scopeRoots(base);
             if (roots.length === 0) throw new Error(`Permission denied: ${base} not granted`);
             const resolved = path.resolve(filePath);

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const path = require('path');
 const http = require('http');

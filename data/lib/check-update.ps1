@@ -1,3 +1,4 @@
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # Check for Updates
 $APP_NAME    = '__APP_NAME__'
 $APP_VERSION = '__APP_VERSION__'
