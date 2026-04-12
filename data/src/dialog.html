@@ -18,6 +18,9 @@
     --text-muted:  #64748b;
     --text-dim:    #94a3b8;
     --green:       #10b981;
+    --yellow:      #eab308;
+    --orange:      #f97316;
+    --red:         #ef4444;
     --mono:        'Cascadia Code', 'Consolas', monospace;
   }
 
@@ -251,6 +254,48 @@
     opacity: .85;
   }
 
+  /* -- Dangerous permission warning -------------------------------------- */
+  .perm-item.danger-critical { border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.06); }
+  .perm-item.danger-high     { border-color: rgba(249,115,22,.35); background: rgba(249,115,22,.05); }
+  .perm-item.danger-medium   { border-color: rgba(234,179,8,.3); background: rgba(234,179,8,.04); }
+
+  .perm-danger {
+    font-size: 10px;
+    line-height: 1.45;
+    margin-top: 4px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    display: flex;
+    gap: 5px;
+    align-items: flex-start;
+  }
+  .danger-critical .perm-danger { background: rgba(239,68,68,.1); color: #fca5a5; }
+  .danger-high     .perm-danger { background: rgba(249,115,22,.1); color: #fdba74; }
+  .danger-medium   .perm-danger { background: rgba(234,179,8,.08); color: #fde68a; }
+
+  .perm-danger-icon { flex-shrink: 0; margin-top: 1px; }
+  .perm-danger-recommend { opacity: .75; font-style: italic; }
+
+  /* -- Approved perms (shown in update dialog) --------------------------- */
+  .approved-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin: 10px 0 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .perm-item.approved {
+    opacity: .5;
+    border-color: rgba(16,185,129,.2);
+    pointer-events: none;
+  }
+  .perm-item.approved .perm-icon { color: var(--green); }
+
   /* -- Scroll hint ------------------------------------------------------- */
   .body-wrap {
     flex: 1;
@@ -378,7 +423,7 @@
 
 <div class="body-wrap">
   <div class="body" id="body-scroll">
-    <div class="section-label">Requests access to</div>
+    <div class="section-label" id="section-label">Requests access to</div>
     <div class="perm-list" id="perm-list"></div>
   </div>
   <div class="scroll-hint" id="scroll-hint">
@@ -413,6 +458,10 @@ const ICONS = {
     SVG('<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>'),
   'ctx.broadcast':
     SVG('<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" opacity=".15" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/><path d="M6.34 6.34a8 8 0 000 11.32M17.66 6.34a8 8 0 010 11.32M3.52 3.52a12 12 0 000 16.96M20.48 3.52a12 12 0 010 16.96"/>'),
+  'config.read':
+    SVG('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>'),
+  'config.write':
+    SVG('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>'),
 };
 
 const DEFAULT_ICON =
@@ -428,7 +477,13 @@ const PERM_DETAILS = {
   'ctx.provide'  : 'ctx.provide(name, value)  -  exposes a service other plugins can ctx.use()',
   'ctx.broadcast': 'ctx.broadcast(msg)  -  fires vm:broadcast on the shared event bus',
   'vm.manage'    : 'ctx.use("vm")  -  getAll - disable - enable - resetPerms - getDependents',
+  'config.read'  : 'config.get(key, default?) - config.all() (unscoped only)',
+  'config.write' : 'config.set(key, value)',
 };
+
+const WARN_ICON = '<svg class="perm-danger-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+
+let DANGER = {}; // set after data is parsed
 
 const AVATAR_COLORS = [
   ['#1e3a5f','#60a5fa'], ['#1a3a2a','#34d399'], ['#3b1f4a','#c084fc'],
@@ -446,7 +501,7 @@ function truncateScope(scope) {
   return '...' + sep + parts.slice(-3).join(sep);
 }
 
-function renderPerm(perm, container, reasons) {
+function renderPerm(perm, container, reasons, opts = {}) {
   const colon = perm.indexOf(':');
   const base  = colon === -1 ? perm : perm.slice(0, colon);
   const scope = colon === -1 ? null  : perm.slice(colon + 1);
@@ -455,6 +510,8 @@ function renderPerm(perm, container, reasons) {
   const desc    = PERM_DESCRIPTIONS[base] || base;
   const reason  = reasons && (reasons[perm] || reasons[base]) || null;
   const detail  = PERM_DETAILS[base] || null;
+  // Dangerous = unscoped exact match only (scoped permissions are fine)
+  const danger  = (!scope && DANGER[perm]) || null;
 
   // Tooltip lines
   const tooltipLines = [];
@@ -467,8 +524,18 @@ function renderPerm(perm, container, reasons) {
       tooltipLines.map(l => `<div class="perm-tooltip-line">${l}</div>`).join('') +
     `</div>`;
 
+  // Danger warning box
+  const dangerHtml = danger
+    ? `<div class="perm-danger">${WARN_ICON}<div>` +
+        `<div>${danger.reason}</div>` +
+        (danger.recommend ? `<div class="perm-danger-recommend">Recommended: ${danger.recommend}</div>` : '') +
+      `</div></div>`
+    : '';
+
   const item = document.createElement('div');
-  item.className = 'perm-item';
+  item.className = 'perm-item' +
+    (opts.approved ? ' approved' : '') +
+    (danger ? ` danger-${danger.level}` : '');
   item.innerHTML =
     tooltip +
     `<span class="perm-icon">${icon}</span>` +
@@ -476,12 +543,14 @@ function renderPerm(perm, container, reasons) {
       `<div class="perm-label">${desc}</div>` +
       (scope  ? `<div class="perm-scope">${truncateScope(scope)}</div>` : '') +
       (reason ? `<div class="perm-reason">${reason}</div>` : '') +
+      dangerHtml +
     `</div>`;
   container.appendChild(item);
 }
 
 const data = JSON.parse(document.getElementById('d').textContent);
 const PERM_DESCRIPTIONS = data.permDescriptions;
+DANGER = data.dangerousPerms || {};
 
 // Enforce intended window dimensions regardless of what the OS/browser opened.
 // window.resizeTo works in Edge/Chrome --app mode.
@@ -530,6 +599,26 @@ if (data.type === 'bundle') {
     }
     for (const perm of plugin.permissions) {
       renderPerm(perm, list, plugin.permReasons);
+    }
+  }
+} else if (data.type === 'plugin-update') {
+  // Permission delta: show new permissions first, then already-approved below
+  document.getElementById('section-label').textContent = 'New permissions requested';
+
+  for (const perm of data.permissions) {
+    renderPerm(perm, list, data.permReasons);
+  }
+
+  // Show already approved section
+  if (data.approvedPermissions && data.approvedPermissions.length > 0) {
+    const approvedLabel = document.createElement('div');
+    approvedLabel.className = 'approved-label';
+    approvedLabel.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>' +
+      'Already approved';
+    list.appendChild(approvedLabel);
+    for (const perm of data.approvedPermissions) {
+      renderPerm(perm, list, data.permReasons, { approved: true });
     }
   }
 } else {

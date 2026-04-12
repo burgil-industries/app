@@ -30,6 +30,20 @@ const PERM_DESCRIPTIONS = {
     'ctx.provide'    : 'Provide services to other plugins',
     'ctx.broadcast'  : 'Send messages to all connected clients',
     'vm.manage'      : 'Manage plugins (enable, disable, reload)',
+    'config.read'    : 'Read configuration values',
+    'config.write'   : 'Write configuration values',
+};
+
+// Permissions that get a visual warning in the dialog. Only UNSCOPED variants
+// are dangerous - scoped versions (e.g. system.exec:powershell) are fine.
+const DANGEROUS_PERMS = {
+    'fs.read'      : { level: 'high',     reason: 'Unrestricted read access to ALL files on your computer',      recommend: 'Scope to ${pluginDataDir} or a specific path' },
+    'fs.write'     : { level: 'high',     reason: 'Unrestricted write access to ALL files on your computer',     recommend: 'Scope to ${pluginDataDir} or a specific path' },
+    'system.exec'  : { level: 'critical', reason: 'Can run ANY system command without restriction',              recommend: 'Scope to specific commands, e.g. system.exec:powershell' },
+    'net.connect'  : { level: 'high',     reason: 'Can connect to ANY server on the internet',                   recommend: 'Scope to specific hosts, e.g. net.connect:api.example.com' },
+    'config.read'  : { level: 'low',      reason: 'Can read ALL config keys including other plugins\' settings', recommend: 'Scope to your own prefix, e.g. config.read:myplugin.' },
+    'config.write' : { level: 'medium',   reason: 'Can modify ALL config keys including other plugins\' settings', recommend: 'Scope to your own prefix, e.g. config.write:myplugin.' },
+    'vm.manage'    : { level: 'medium',   reason: 'Can enable, disable, and control all plugins at runtime',     recommend: null },
 };
 
 // -- Plugin VM -----------------------------------------------------------------
@@ -266,11 +280,6 @@ class PluginVM {
             }
         }
 
-        const saved = this._loadSavedPerms(pluginId);
-        if (saved !== null) return saved;
-
-        const winH = Math.min(Math.max(206 + requested.length * 54, 290), 500);
-
         // Expand ${dataDir} and ${pluginDataDir} in reason keys so they match expanded perms
         const pluginDataDir = path.join(this.dataDir, 'plugins', pluginId);
         const expandedReasons = {};
@@ -279,6 +288,47 @@ class PluginVM {
                 .replace('${dataDir}', this.dataDir)
                 .replace('${pluginDataDir}', pluginDataDir)] = v;
         }
+
+        const saved = this._loadSavedPerms(pluginId);
+
+        // -- Delta detection: if saved perms exist, check for newly added ones ----
+        if (saved !== null) {
+            const newPerms = requested.filter(p => !saved.has(p));
+            if (newPerms.length === 0) return saved; // nothing changed
+
+            // Plugin manifest added new permissions since last approval
+            console.log(`[vm] "${pluginId}" has ${newPerms.length} new permission(s) - prompting`);
+            const approvedList = [...saved];
+            const rows = newPerms.length + approvedList.length;
+            const winH = Math.min(Math.max(230 + rows * 54, 320), 560);
+
+            const dialogData = {
+                type               : 'plugin-update',
+                appName            : this.appName,
+                name               : meta.name    || meta.id,
+                version            : meta.version || '',
+                description        : meta.description || '',
+                permissions        : newPerms,           // new - need approval
+                approvedPermissions: approvedList,       // already granted
+                permDescriptions   : PERM_DESCRIPTIONS,
+                permReasons        : expandedReasons,
+                dangerousPerms     : DANGEROUS_PERMS,
+                winW               : 450,
+                winH,
+            };
+
+            const granted = await this._showPermDialog(dialogData, 450, winH);
+            if (!granted) {
+                throw new Error(`[vm] New permissions denied by user for plugin "${pluginId}"`);
+            }
+
+            const merged = new Set([...saved, ...newPerms]);
+            this._savePerms(pluginId, merged);
+            return merged;
+        }
+
+        // -- First time: full permission prompt ---------------------------------
+        const winH = Math.min(Math.max(206 + requested.length * 54, 290), 500);
 
         const dialogData = {
             type            : 'plugin',
@@ -289,6 +339,7 @@ class PluginVM {
             permissions     : requested,
             permDescriptions: PERM_DESCRIPTIONS,
             permReasons     : expandedReasons,
+            dangerousPerms  : DANGEROUS_PERMS,
             winW            : 450,
             winH,
         };
@@ -349,6 +400,7 @@ class PluginVM {
             description     : bundleMeta.description || '',
             plugins         : groups,
             permDescriptions: PERM_DESCRIPTIONS,
+            dangerousPerms  : DANGEROUS_PERMS,
             winW            : 450,
             winH,
         };
@@ -431,7 +483,7 @@ class PluginVM {
             if (fs.existsSync(bundleFile)) {
                 try {
                     const meta  = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
-                    const entry = cache[meta.id] || {};
+                    const entry = cache[meta.id] || cache[folder] || {};
                     result.push({
                         id: meta.id, name: meta.name || meta.id,
                         version: meta.version || '', description: meta.description || '',
@@ -439,12 +491,22 @@ class PluginVM {
                         dependencies: [], permissions: [], dependents: [],
                         status: entry.status || 'new',
                         loaded: this._loaded.includes(meta.id),
+                        error: entry.error || null,
                     });
-                } catch (_) {}
+                } catch (e) {
+                    // Broken JSON - synthesise an error card from the cache
+                    const entry = cache[folder] || {};
+                    result.push({
+                        id: folder, name: folder, version: '', description: '',
+                        type: 'bundle', members: [], dependencies: [], permissions: [], dependents: [],
+                        status: 'error', loaded: false,
+                        error: entry.error || `bundle.json parse error: ${e.message}`,
+                    });
+                }
             } else if (fs.existsSync(pluginFile)) {
                 try {
                     const meta  = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
-                    const entry = cache[meta.id] || {};
+                    const entry = cache[meta.id] || cache[folder] || {};
                     result.push({
                         id: meta.id, name: meta.name || meta.id,
                         version: meta.version || '', description: meta.description || '',
@@ -453,8 +515,18 @@ class PluginVM {
                         permissions: meta.permissions || [], dependents: [],
                         status: entry.status || 'new',
                         loaded: this._loaded.includes(meta.id),
+                        error: entry.error || null,
                     });
-                } catch (_) {}
+                } catch (e) {
+                    // Broken JSON - synthesise an error card from the cache
+                    const entry = cache[folder] || {};
+                    result.push({
+                        id: folder, name: folder, version: '', description: '',
+                        type: 'plugin', dependencies: [], permissions: [], dependents: [],
+                        status: 'error', loaded: false,
+                        error: entry.error || `plugin.json parse error: ${e.message}`,
+                    });
+                }
             }
         }
 
@@ -524,6 +596,93 @@ class PluginVM {
         this._loaded = this._loaded.filter(x => x !== id);
         await this._syncPlugins();
         return { ok: true };
+    }
+
+    // -- Manifest validation ---------------------------------------------------
+
+    /**
+     * Throws a descriptive Error if plugin.json is structurally wrong or missing required fields.
+     * Call this immediately after JSON.parse so bad manifests are caught before any loading begins.
+     */
+    _validatePluginManifest(meta, pluginDir) {
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta))
+            throw new Error('plugin.json must be a JSON object');
+
+        // Required fields
+        if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
+            throw new Error('"id" is required and must be a non-empty string');
+        if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
+            throw new Error(`"id" "${meta.id}" is invalid - use lowercase letters, digits, hyphens, or underscores (must start with letter/digit)`);
+        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
+            throw new Error('"name" is required and must be a non-empty string');
+
+        // Optional typed fields
+        if (meta.version !== undefined && typeof meta.version !== 'string')
+            throw new Error('"version" must be a string');
+        if (meta.description !== undefined && typeof meta.description !== 'string')
+            throw new Error('"description" must be a string');
+
+        // main file must exist
+        const mainFile = path.join(pluginDir, typeof meta.main === 'string' ? meta.main : 'index.js');
+        if (!fs.existsSync(mainFile))
+            throw new Error(`main file "${path.relative(pluginDir, mainFile)}" not found in plugin directory`);
+
+        // dependencies: object<string, string>
+        if (meta.dependencies !== undefined) {
+            if (typeof meta.dependencies !== 'object' || Array.isArray(meta.dependencies))
+                throw new Error('"dependencies" must be an object, e.g. { "core": "*" }');
+            for (const [k, v] of Object.entries(meta.dependencies)) {
+                if (typeof v !== 'string')
+                    throw new Error(`"dependencies.${k}" value must be a string (e.g. "*")`);
+            }
+        }
+
+        // permissions: string[]
+        if (meta.permissions !== undefined) {
+            if (!Array.isArray(meta.permissions))
+                throw new Error('"permissions" must be an array of strings');
+            for (let i = 0; i < meta.permissions.length; i++) {
+                if (typeof meta.permissions[i] !== 'string' || !meta.permissions[i].trim())
+                    throw new Error(`"permissions[${i}]" must be a non-empty string`);
+            }
+        }
+
+        // uses: object<string, string[]>
+        if (meta.uses !== undefined) {
+            if (typeof meta.uses !== 'object' || Array.isArray(meta.uses))
+                throw new Error('"uses" must be an object mapping service names to arrays of method names');
+            for (const [k, v] of Object.entries(meta.uses)) {
+                if (!Array.isArray(v))
+                    throw new Error(`"uses.${k}" must be an array of method names`);
+            }
+        }
+
+        // permissionReasons: object<string, string>
+        if (meta.permissionReasons !== undefined) {
+            if (typeof meta.permissionReasons !== 'object' || Array.isArray(meta.permissionReasons))
+                throw new Error('"permissionReasons" must be an object mapping permission strings to reason strings');
+            for (const [k, v] of Object.entries(meta.permissionReasons)) {
+                if (typeof v !== 'string')
+                    throw new Error(`"permissionReasons.${k}" value must be a string`);
+            }
+        }
+    }
+
+    _validateBundleManifest(meta) {
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta))
+            throw new Error('bundle.json must be a JSON object');
+        if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
+            throw new Error('"id" is required and must be a non-empty string');
+        if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
+            throw new Error(`"id" "${meta.id}" is invalid - use lowercase letters, digits, hyphens, or underscores`);
+        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
+            throw new Error('"name" is required and must be a non-empty string');
+        if (!Array.isArray(meta.plugins) || meta.plugins.length === 0)
+            throw new Error('"plugins" must be a non-empty array of plugin IDs');
+        for (let i = 0; i < meta.plugins.length; i++) {
+            if (!meta.plugins[i] || typeof meta.plugins[i] !== 'string' || !meta.plugins[i].trim())
+                throw new Error(`"plugins[${i}]" must be a non-empty string plugin ID`);
+        }
     }
 
     // -- Sandbox context builder -----------------------------------------------
@@ -698,7 +857,47 @@ class PluginVM {
                     throw new Error(`Service "${name}" not found - is the plugin that provides it loaded?`);
                 }
                 const service = self._services.get(name);
-                // Function filtering: "uses": { "log": ["info", "warn"] } in plugin.json
+
+                // -- Config service: gated by config.read / config.write permissions --
+                if (name === 'config') {
+                    if (!has('config.read') && !has('config.write')) {
+                        throw new Error(
+                            `Permission denied: plugin "${pluginId}" needs config.read or config.write ` +
+                            `in permissions to access the config service`
+                        );
+                    }
+                    const configKeyOk = (base, key) => {
+                        if (grantedPerms.has(base)) return true; // unscoped = full access
+                        for (const p of grantedPerms) {
+                            if (!p.startsWith(base + ':')) continue;
+                            const prefix = p.slice(base.length + 1);
+                            if (key === prefix || key.startsWith(prefix)) return true;
+                        }
+                        return false;
+                    };
+                    return {
+                        get(key, def) {
+                            if (!configKeyOk('config.read', key)) {
+                                throw new Error(`Permission denied: config.read for key "${key}" not granted`);
+                            }
+                            return service.get(key, def);
+                        },
+                        set(key, value) {
+                            if (!configKeyOk('config.write', key)) {
+                                throw new Error(`Permission denied: config.write for key "${key}" not granted`);
+                            }
+                            return service.set(key, value);
+                        },
+                        all() {
+                            if (!grantedPerms.has('config.read')) {
+                                throw new Error('Permission denied: unscoped config.read required for all()');
+                            }
+                            return service.all();
+                        },
+                    };
+                }
+
+                // Function filtering: "uses": { "hello": ["greet"] } in plugin.json
                 const allowed = (meta.uses || {})[name];
                 if (Array.isArray(allowed) && allowed.length > 0 &&
                     typeof service === 'object' && service !== null) {
@@ -829,18 +1028,26 @@ class PluginVM {
 
             if (fs.existsSync(bundleFile)) {
                 try {
-                    const meta   = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
+                    const meta = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
+                    this._validateBundleManifest(meta);
                     meta._dir    = dir;
                     meta._folder = folder;
                     bundleManifests[meta.id] = meta;
-                } catch (e) { console.error(`[vm] skipping bundle "${folder}": ${e.message}`); }
+                } catch (e) {
+                    console.error(`[vm] bundle "${folder}" invalid: ${e.message}`);
+                    cache[folder] = { status: 'error', folder, error: e.message };
+                }
             } else if (fs.existsSync(pluginFile)) {
                 try {
-                    const meta   = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
+                    const meta = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
+                    this._validatePluginManifest(meta, dir);
                     meta._dir    = dir;
                     meta._folder = folder;
                     pluginManifests[meta.id] = meta;
-                } catch (e) { console.error(`[vm] skipping plugin "${folder}": ${e.message}`); }
+                } catch (e) {
+                    console.error(`[vm] plugin "${folder}" invalid: ${e.message}`);
+                    cache[folder] = { status: 'error', folder, error: e.message };
+                }
             }
         }
 
