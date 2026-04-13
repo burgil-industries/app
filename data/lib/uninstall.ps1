@@ -19,6 +19,35 @@ if (-not $_mutex.WaitOne(0, $false)) {
     exit
 }
 
+# Check if the installer is running
+$_setupMutex = New-Object System.Threading.Mutex($false, "Global\$($AppName)_Setup_Mutex")
+if (-not $_setupMutex.WaitOne(0, $false)) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "$AppName Setup is currently running. Please close it before uninstalling.", "$AppName Uninstaller",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $_setupMutex.Dispose()
+    $_mutex.ReleaseMutex()
+    $_mutex.Dispose()
+    exit
+}
+$_setupMutex.ReleaseMutex()
+$_setupMutex.Dispose()
+
+# Check if the app is running
+try {
+    $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+    if ($listeners | Where-Object { $_.Port -eq 53420 }) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "$AppName is currently running. Please close it before uninstalling.", "$AppName Uninstaller",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        $_mutex.ReleaseMutex()
+        $_mutex.Dispose()
+        exit
+    }
+} catch {}
+
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
