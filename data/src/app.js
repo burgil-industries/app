@@ -18,7 +18,7 @@ const vm = new PluginVM({
 // Heartbeat server on port 53420 - lets the installer/updater detect that
 // the app is running via Test-ComputerRunning (checks TCP listeners on 53420).
 // Also accepts POST /hook to trigger hooks from external entry points
-// (router.ps1, launcher, protocol handler, etc.).
+// (open.ps1, router.ps1, launcher, protocol handler, etc.).
 http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/hook') {
         let body = '';
@@ -30,13 +30,24 @@ http.createServer((req, res) => {
                     res.writeHead(400); res.end('{"error":"missing hook"}');
                     return;
                 }
+                console.log(`[app] hook received: ${hook}`);
+
                 const hooks = vm.getService('hooks');
                 if (hooks) {
                     await hooks.doAction(hook, data || {});
                 }
+
+                // Built-in file-open handler: runs even without hooks/plugins
+                if (hook === 'app:file-open' && data && data.path &&
+                    data.path.endsWith('.computer')) {
+                    console.log(`[app] handling file-open: ${data.path}`);
+                    try { await vm.handleFileOpen(data.path); }
+                    catch (e) { console.error(`[app] handleFileOpen error: ${e.message}`); }
+                }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end('{"ok":true}');
             } catch (e) {
+                console.error(`[app] hook error: ${e.message}`);
                 res.writeHead(400); res.end(JSON.stringify({ error: e.message }));
             }
         });
@@ -51,9 +62,11 @@ http.createServer((req, res) => {
   });
 
 vm.loadAll().then(async () => {
-    // Fire the app:launch hook after all plugins are loaded
     const hooks = vm.getService('hooks');
-    if (hooks) await hooks.doAction('app:launch', {});
+    if (hooks) {
+        await hooks.doAction('app:launch', {});
+    }
+    console.log('[app] ready');
 }).catch(err => {
     console.error('[app] fatal:', err.message);
     console.error(err);

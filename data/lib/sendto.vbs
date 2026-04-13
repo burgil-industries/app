@@ -2,5 +2,5 @@ If WScript.Arguments.Count > 0 Then
     Dim scriptDir, sh
     scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
     Set sh = CreateObject("WScript.Shell")
-    sh.Run "wscript.exe """ & scriptDir & "router.vbs"" ""computer://open?path=" & WScript.Arguments(0) & """", 0, False
+    sh.Run "wscript.exe """ & scriptDir & "open.vbs"" """ & WScript.Arguments(0) & """", 0, False
 End If

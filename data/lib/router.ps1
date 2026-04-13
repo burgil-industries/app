@@ -157,124 +157,18 @@ try {
         'open' {
             $filePath = $query['path']
             if ($filePath -and $filePath -match '\.computer$' -and (Test-Path $filePath)) {
-                # Fire file-open hook
-                Fire-Hook 'app:file-open' @{ path = $filePath }
-
-                # Validate .computer file
-                $fileName = [System.IO.Path]::GetFileName($filePath)
-                $rawContent = $null
-                $jsonObj = $null
-                $errors = @()
-
+                # Hand off to the running app instantly - it handles validation & UI.
+                # If the app is not running, fall back to opening in the default editor.
+                $handed = $false
                 try {
-                    $rawContent = Get-Content $filePath -Raw -ErrorAction Stop
-                } catch {
-                    $errors += "Cannot read file: $_"
-                }
-
-                if ($rawContent -ne $null) {
-                    try {
-                        $jsonObj = $rawContent | ConvertFrom-Json -ErrorAction Stop
-                    } catch {
-                        $errors += "Invalid JSON: $_"
-                    }
-                }
-
-                if ($jsonObj -ne $null) {
-                    $isBundle = $fileName -eq 'bundle.computer'
-                    $isPlugin = $fileName -eq 'plugin.computer'
-
-                    if (-not $isBundle -and -not $isPlugin) {
-                        # Detect type from content
-                        if ($jsonObj.plugins) { $isBundle = $true }
-                        elseif ($jsonObj.main -or $jsonObj.dependencies) { $isPlugin = $true }
-                        else { $isPlugin = $true }  # default
-                    }
-
-                    if ($isBundle) {
-                        if (-not $jsonObj.id -or $jsonObj.id -isnot [string] -or -not $jsonObj.id.Trim()) {
-                            $errors += '"id" is required and must be a non-empty string'
-                        } elseif ($jsonObj.id -notmatch '^[a-z0-9][a-z0-9\-_]*$') {
-                            $errors += "`"id`" `"$($jsonObj.id)`" is invalid - use lowercase letters, digits, hyphens, or underscores"
-                        }
-                        if (-not $jsonObj.name -or $jsonObj.name -isnot [string] -or -not $jsonObj.name.Trim()) {
-                            $errors += '"name" is required and must be a non-empty string'
-                        }
-                        if (-not $jsonObj.plugins -or $jsonObj.plugins.Count -eq 0) {
-                            $errors += '"plugins" must be a non-empty array of plugin IDs'
-                        } elseif ($jsonObj.plugins) {
-                            for ($i = 0; $i -lt $jsonObj.plugins.Count; $i++) {
-                                $p = $jsonObj.plugins[$i]
-                                if (-not $p -or $p -isnot [string] -or -not $p.Trim()) {
-                                    $errors += "`"plugins[$i]`" must be a non-empty string plugin ID"
-                                }
-                            }
-                        }
-                    } else {
-                        # Plugin validation
-                        if (-not $jsonObj.id -or $jsonObj.id -isnot [string] -or -not $jsonObj.id.Trim()) {
-                            $errors += '"id" is required and must be a non-empty string'
-                        } elseif ($jsonObj.id -notmatch '^[a-z0-9][a-z0-9\-_]*$') {
-                            $errors += "`"id`" `"$($jsonObj.id)`" is invalid - use lowercase letters, digits, hyphens, or underscores"
-                        }
-                        if (-not $jsonObj.name -or $jsonObj.name -isnot [string] -or -not $jsonObj.name.Trim()) {
-                            $errors += '"name" is required and must be a non-empty string'
-                        }
-                        if ($jsonObj.version -ne $null -and $jsonObj.version -isnot [string]) {
-                            $errors += '"version" must be a string'
-                        }
-                        if ($jsonObj.dependencies -ne $null -and $jsonObj.dependencies -is [array]) {
-                            $errors += '"dependencies" must be an object, e.g. { "core": "*" }'
-                        }
-                        if ($jsonObj.permissions -ne $null -and $jsonObj.permissions -isnot [array]) {
-                            $errors += '"permissions" must be an array of strings'
-                        }
-                        # Check main file exists
-                        $dir = [System.IO.Path]::GetDirectoryName($filePath)
-                        $mainFile = if ($jsonObj.main) { $jsonObj.main } else { "index.js" }
-                        $mainPath = Join-Path $dir $mainFile
-                        if (-not (Test-Path $mainPath)) {
-                            $errors += "Main file `"$mainFile`" not found in plugin directory"
-                        }
-                    }
-                }
-
-                $type = if ($isBundle) { "Bundle" } else { "Plugin" }
-
-                if ($errors.Count -gt 0) {
-                    $msg = "$type manifest has $($errors.Count) error(s):`n`n"
-                    foreach ($e in $errors) { $msg += "  - $e`n" }
-                    $msg += "`nWould you like to open the file in your code editor to fix it?"
-                    $result = [System.Windows.Forms.MessageBox]::Show(
-                        $msg, "$AppName - Invalid $type",
-                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                        [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-                        Start-Process $filePath
-                    }
-                } else {
-                    $msg = "$type manifest is valid.`n`n"
-                    $msg += "ID: $($jsonObj.id)`n"
-                    $msg += "Name: $($jsonObj.name)`n"
-                    if ($jsonObj.version) { $msg += "Version: $($jsonObj.version)`n" }
-                    if ($jsonObj.description) { $msg += "Description: $($jsonObj.description)`n" }
-                    if ($isBundle) {
-                        $msg += "Plugins: $($jsonObj.plugins -join ', ')`n"
-                    } else {
-                        if ($jsonObj.permissions) { $msg += "`nPermissions:`n$(Format-PermissionList $jsonObj.permissions)`n" }
-                        if ($jsonObj.dependencies) {
-                            $deps = ($jsonObj.dependencies | Get-Member -MemberType NoteProperty | ForEach-Object { $_.Name }) -join ', '
-                            if ($deps) { $msg += "Dependencies: $deps`n" }
-                        }
-                    }
-                    $msg += "`nWould you like to open the file in your code editor?"
-                    $result = [System.Windows.Forms.MessageBox]::Show(
-                        $msg, "$AppName - $type Manifest",
-                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                        [System.Windows.Forms.MessageBoxIcon]::Information)
-                    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-                        Start-Process $filePath
-                    }
+                    $json = @{ hook = 'app:file-open'; data = @{ path = $filePath } } | ConvertTo-Json -Compress
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Headers.Add("Content-Type", "application/json")
+                    $wc.UploadString("http://127.0.0.1:53420/hook", $json) | Out-Null
+                    $handed = $true
+                } catch {}
+                if (-not $handed) {
+                    Start-Process $filePath
                 }
             } else {
                 $msg = "URI    : $Uri`nScheme : $($parsed.Scheme)`nHost   : $($parsed.Host)`nPath   : $($parsed.AbsolutePath)`nQuery  : $($parsed.Query)"

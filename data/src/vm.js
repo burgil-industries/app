@@ -32,6 +32,9 @@ const PERM_DESCRIPTIONS = {
     'vm.manage'      : 'Manage plugins (enable, disable, reload)',
     'config.read'    : 'Read configuration values',
     'config.write'   : 'Write configuration values',
+    'hooks.action'   : 'Register action callbacks on hooks',
+    'hooks.filter'   : 'Register filter callbacks on hooks',
+    'hooks.fire'     : 'Fire hooks (doAction / applyFilters)',
 };
 
 // Permissions that get a visual warning in the dialog. Only UNSCOPED variants
@@ -44,6 +47,9 @@ const DANGEROUS_PERMS = {
     'config.read'  : { level: 'low',      reason: 'Can read ALL config keys including other plugins\' settings', recommend: 'Scope to your own prefix, e.g. config.read:myplugin.' },
     'config.write' : { level: 'medium',   reason: 'Can modify ALL config keys including other plugins\' settings', recommend: 'Scope to your own prefix, e.g. config.write:myplugin.' },
     'vm.manage'    : { level: 'medium',   reason: 'Can enable, disable, and control all plugins at runtime',     recommend: null },
+    'hooks.action' : { level: 'medium',   reason: 'Can register action callbacks on ALL hooks',                   recommend: 'Scope to specific hooks, e.g. hooks.action:app:launch' },
+    'hooks.filter' : { level: 'medium',   reason: 'Can register filter callbacks on ALL hooks',                   recommend: 'Scope to specific hooks, e.g. hooks.filter:app:file-open:handle' },
+    'hooks.fire'   : { level: 'high',     reason: 'Can fire ANY hook, triggering all registered callbacks',       recommend: 'Scope to your own namespace, e.g. hooks.fire:my-plugin:*' },
 };
 
 // -- Plugin VM -----------------------------------------------------------------
@@ -71,6 +77,204 @@ class PluginVM {
     /** Returns a service by name, or undefined if not registered. */
     getService(name) {
         return this._services.get(name);
+    }
+
+    /**
+     * Handle a .computer file being opened from the shell (file association,
+     * right-click, Send To, etc.).  Validates the manifest and shows either
+     * the permission dialog (valid) or an error dialog with "Open in editor"
+     * (invalid).
+     *
+     * The behaviour is overridable via the 'app:file-open' hook - if a plugin
+     * registers an action for that hook, it runs first.  To fully replace the
+     * default behaviour, use a filter on 'app:file-open:handle' that returns
+     * { handled: true }.
+     */
+    async handleFileOpen(filePath) {
+        // Let plugins override via filter
+        const hooks = this.getService('hooks');
+        if (hooks) {
+            const result = await hooks.applyFilters('app:file-open:handle', { handled: false, path: filePath });
+            if (result && result.handled) return;
+        }
+
+        let raw, meta, errors = [];
+        const fileName = path.basename(filePath);
+
+        // Read & parse
+        try { raw = fs.readFileSync(filePath, 'utf8'); }
+        catch (e) { errors.push(`Cannot read file: ${e.message}`); }
+
+        if (raw !== undefined) {
+            if (!raw.trim()) {
+                errors.push('File is empty');
+            } else {
+                try { meta = JSON.parse(raw); }
+                catch (e) { errors.push(`Invalid JSON: ${e.message}`); }
+                if (meta !== undefined && (typeof meta !== 'object' || meta === null || Array.isArray(meta))) {
+                    errors.push('File must contain a JSON object');
+                    meta = undefined;
+                }
+            }
+        }
+
+        // Detect type
+        let isBundle = fileName === 'bundle.computer';
+        let isPlugin = fileName === 'plugin.computer';
+        if (!isBundle && !isPlugin && meta) {
+            if (meta.plugins) isBundle = true;
+            else isPlugin = true;
+        }
+        const type = isBundle ? 'Bundle' : 'Plugin';
+
+        // Validate - collect ALL errors at once
+        if (meta) {
+            const validErrors = isBundle
+                ? this._validateBundleManifest(meta)
+                : this._validatePluginManifest(meta, path.dirname(filePath));
+            errors.push(...validErrors);
+        }
+
+        if (errors.length > 0) {
+            // Show error dialog with "Open in editor" option
+            const errHtml = errors.map(e => `<li>${this._escHtml(e)}</li>`).join('');
+            this._showFileOpenDialog({
+                type: 'error',
+                title: `Invalid ${type} Manifest`,
+                heading: `${type} manifest has ${errors.length} error(s)`,
+                body: `<ul style="text-align:left;margin:12px 0;padding-left:20px;color:#f0838a">${errHtml}</ul>`,
+                filePath,
+                appName: this.appName,
+            });
+        } else {
+            // Valid - show the permission panel
+            const pluginDir = path.dirname(filePath);
+            const pluginDataDir = path.join(this.dataDir, 'plugins', meta.id);
+            const requested = (meta.permissions || []).map(p =>
+                p.replace('${dataDir}', this.dataDir)
+                 .replace('${pluginDataDir}', pluginDataDir)
+            );
+
+            const expandedReasons = {};
+            for (const [k, v] of Object.entries(meta.permissionReasons || {})) {
+                expandedReasons[k
+                    .replace('${dataDir}', this.dataDir)
+                    .replace('${pluginDataDir}', pluginDataDir)] = v;
+            }
+
+            const rows = requested.length;
+            const winH = rows === 0 ? 340 : Math.min(Math.max(226 + rows * 54, 290), 500);
+
+            const dialogData = {
+                type        : isBundle ? 'bundle' : 'plugin',
+                appName     : this.appName,
+                name        : meta.name    || meta.id,
+                version     : meta.version || '',
+                description : meta.description || '',
+                permissions : requested,
+                permDescriptions: PERM_DESCRIPTIONS,
+                permReasons     : expandedReasons,
+                dangerousPerms  : DANGEROUS_PERMS,
+                winW             : 450,
+                winH,
+            };
+
+            if (isBundle) {
+                dialogData.members = meta.plugins || [];
+            }
+
+            const granted = await this._showPermDialog(dialogData, 450, winH);
+            if (granted) {
+                const perms = new Set(requested);
+                this._savePerms(meta.id, perms);
+                try {
+                    const ctx = this._buildCtx(meta.id, perms, pluginDir, meta);
+                    fs.mkdirSync(ctx.dataDir, { recursive: true });
+                    this._runPlugin(pluginDir, meta, ctx);
+                    console.log(`[vm] "${meta.id}" loaded from file open`);
+                } catch (e) {
+                    console.error(`[vm] failed to load "${meta.id}": ${e.message}`);
+                    const msg = e.message.replace(/^\[vm\]\s*/i, '');
+                    this._showFileOpenDialog({
+                        type    : 'error',
+                        title   : `Failed to Load ${type}`,
+                        heading : `"${meta.name || meta.id}" failed to load`,
+                        body    : `<p style="color:#f0838a;margin:12px 0">${this._escHtml(msg)}</p>`,
+                        filePath,
+                        appName : this.appName,
+                    });
+                }
+            }
+        }
+    }
+
+    _escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /**
+     * Show a file-open result dialog (error or info) in Edge --app.
+     * For errors, includes an "Open in Editor" button.
+     */
+    _showFileOpenDialog({ type, title, heading, body, filePath, appName }) {
+        const iconPath = path.join(this.dataDir, 'assets', `${appName.toLowerCase()}.ico`);
+        const hasIcon  = fs.existsSync(iconPath);
+        const bgColor  = type === 'error' ? '#1a0a0a' : '#0d1117';
+        const headColor = type === 'error' ? '#f85149' : '#58a6ff';
+
+        const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${this._escHtml(title)}</title>
+<style>
+  body { margin:0; padding:24px; background:${bgColor}; color:#c9d1d9; font-family:'Segoe UI',sans-serif; }
+  h2 { color:${headColor}; font-size:16px; margin:0 0 8px; }
+  .path { color:#8b949e; font-size:12px; word-break:break-all; margin:0 0 12px; }
+  ul { font-size:13px; line-height:1.8; }
+  .btn { display:inline-block; padding:8px 20px; margin:8px 4px 0; border:1px solid #30363d; border-radius:6px;
+         background:#21262d; color:#c9d1d9; font-size:13px; cursor:pointer; text-decoration:none; }
+  .btn:hover { background:#30363d; }
+  .btn-primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+  .btn-primary:hover { background:#388bfd; }
+</style></head><body>
+<h2>${this._escHtml(heading)}</h2>
+<p class="path">${this._escHtml(filePath)}</p>
+${body}
+<div style="margin-top:16px;text-align:right">
+  ${type === 'error' ? `<button class="btn btn-primary" onclick="fetch('/open-editor',{method:'POST'}).then(()=>window.close())">Open in Editor</button>` : ''}
+  <button class="btn" onclick="window.close()">Close</button>
+</div>
+<script>new EventSource('/sse');</script>
+</body></html>`;
+
+        const server = http.createServer((req, res) => {
+            if (req.url === '/favicon.ico') {
+                if (hasIcon) {
+                    try { res.writeHead(200, {'Content-Type':'image/x-icon'}); res.end(fs.readFileSync(iconPath)); return; }
+                    catch (_) {}
+                }
+                res.writeHead(204); res.end();
+                return;
+            }
+            if (req.url === '/sse') {
+                res.writeHead(200, {'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+                res.write('data: connected\n\n');
+                const hb = setInterval(() => { try { res.write(':ping\n\n'); } catch(_) { clearInterval(hb); } }, 25000);
+                req.socket.once('close', () => { clearInterval(hb); setTimeout(() => server.close(), 500); });
+                return;
+            }
+            if (req.method === 'POST' && req.url === '/open-editor') {
+                // Use notepad directly - cmd /c start would re-trigger the file
+                // association (this app) for .computer files, causing a loop.
+                spawn('notepad.exe', [filePath], { detached: true, stdio: 'ignore' }).unref();
+                res.writeHead(200); res.end();
+                return;
+            }
+            if (req.url === '/') { res.writeHead(200, {'Content-Type':'text/html;charset=utf-8'}); res.end(html); return; }
+            res.writeHead(404); res.end();
+        });
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address();
+            this._openBrowser(`http://127.0.0.1:${port}/`, 480, type === 'error' ? 340 : 280);
+        });
     }
 
     // -- Feature flags (read from data/config.json, same file as core's Config) -
@@ -138,16 +342,84 @@ class PluginVM {
             // A dedicated profile dir forces Edge to open a fresh window that
             // actually respects --window-size (ignored when a profile is already open).
             const profileDir = path.join(this.dataDir, 'edge-dialog-profile');
-            spawn(edge, [
+
+            // Center on primary monitor (best-effort, falls back to 0,0 area)
+            let posX = 100, posY = 100;
+            try {
+                const out = execFileSync('powershell.exe', [
+                    '-NoProfile', '-Command',
+                    `Add-Type -A System.Windows.Forms;` +
+                    `$s=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea;` +
+                    `"$($s.Width),$($s.Height)"`
+                ], { encoding: 'utf8', timeout: 3000 }).trim();
+                const [sw, sh] = out.split(',').map(Number);
+                if (sw && sh) {
+                    posX = Math.round((sw - w) / 2);
+                    posY = Math.round((sh - h) / 2);
+                }
+            } catch (_) {}
+
+            const child = spawn(edge, [
                 `--app=${url}`,
                 `--window-size=${w},${h}`,
+                `--window-position=${posX},${posY}`,
                 `--user-data-dir=${profileDir}`,
                 '--no-first-run',
                 '--disable-extensions',
                 '--disable-default-apps',
                 '--disable-sync',
                 '--no-default-browser-check',
-            ], { detached: true, stdio: 'ignore' }).unref();
+            ], { detached: true, stdio: 'ignore' });
+            child.unref();
+
+            // Bring the Edge window to foreground after it loads.
+            // Uses HWND_TOPMOST trick: briefly makes the window always-on-top then
+            // restores it - this bypasses the foreground lock entirely.
+            // Retries for up to 6 seconds in case Edge is slow to create its window.
+            const pid = child.pid;
+            if (pid) {
+                spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+                    `Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class FG {
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    public delegate bool EnumProc(IntPtr h, IntPtr lp);
+    public static IntPtr FindByPid(int pid) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, lp) => {
+            uint wp; GetWindowThreadProcessId(h, out wp);
+            if ((int)wp == pid && IsWindowVisible(h)) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+    public static void Activate(IntPtr hwnd) {
+        ShowWindow(hwnd, 9);
+        SetWindowPos(hwnd, (IntPtr)(-1), 0, 0, 0, 0, 0x0003);
+        SetWindowPos(hwnd, (IntPtr)(-2), 0, 0, 0, 0, 0x0003);
+        SetForegroundWindow(hwnd);
+    }
+}
+"@;` +
+                    `$deadline=(Get-Date).AddSeconds(6);` +
+                    `$h=[IntPtr]::Zero;` +
+                    `while((Get-Date)-lt $deadline){` +
+                    `  $h=[FG]::FindByPid(${pid});` +
+                    `  if($h -ne [IntPtr]::Zero){break};` +
+                    `  foreach($c in (Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" -EA SilentlyContinue)){` +
+                    `    $h=[FG]::FindByPid($c.ProcessId);if($h -ne [IntPtr]::Zero){break}` +
+                    `  };` +
+                    `  if($h -ne [IntPtr]::Zero){break};` +
+                    `  Start-Sleep -Milliseconds 300` +
+                    `};` +
+                    `if($h -ne [IntPtr]::Zero){[FG]::Activate($h)}`
+                ], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+            }
         } else {
             exec(`cmd /c start "" "${url}"`);
         }
@@ -189,12 +461,13 @@ class PluginVM {
             }, 2 * 60 * 1000);
 
             const server = http.createServer((req, res) => {
+                if (settled) { if (!res.headersSent) { res.writeHead(503); res.end(); } return; }
                 // -- Favicon ----------------------------------------------------
                 if (req.url === '/favicon.ico') {
                     try {
                         res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'no-cache' });
                         res.end(fs.readFileSync(iconPath));
-                    } catch (_) { res.writeHead(204); res.end(); }
+                    } catch (_) { if (!res.headersSent) { res.writeHead(204); res.end(); } }
                     return;
                 }
 
@@ -233,6 +506,7 @@ class PluginVM {
                     let body = '';
                     req.on('data', chunk => { body += chunk; });
                     req.on('end', () => {
+                        if (res.headersSent) return;
                         try {
                             const { granted } = JSON.parse(body);
                             res.writeHead(200); res.end();
@@ -242,7 +516,7 @@ class PluginVM {
                     return;
                 }
 
-                res.writeHead(404); res.end();
+                if (!res.headersSent) { res.writeHead(404); res.end(); }
             });
 
             server.listen(0, '127.0.0.1', () => {
@@ -609,85 +883,113 @@ class PluginVM {
      * Throws a descriptive Error if plugin.computer is structurally wrong or missing required fields.
      * Call this immediately after JSON.parse so bad manifests are caught before any loading begins.
      */
+    // Returns an array of error strings (empty = valid). Never throws.
     _validatePluginManifest(meta, pluginDir) {
-        if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('plugin.computer must be a JSON object');
+        const errs = [];
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+            errs.push('plugin.computer must be a JSON object');
+            return errs; // can't continue without an object
+        }
 
         // Required fields
         if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
-            throw new Error('"id" is required and must be a non-empty string');
-        if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
-            throw new Error(`"id" "${meta.id}" is invalid - use lowercase letters, digits, hyphens, or underscores (must start with letter/digit)`);
-        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
-            throw new Error('"name" is required and must be a non-empty string');
+            errs.push('"id" is required and must be a non-empty string');
+        else if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
+            errs.push(`"id" "${meta.id}" is invalid — use lowercase letters, digits, hyphens, or underscores (must start with a letter or digit)`);
 
-        // Optional typed fields
-        if (meta.version !== undefined && typeof meta.version !== 'string')
-            throw new Error('"version" must be a string');
+        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
+            errs.push('"name" is required and must be a non-empty string');
+
+        if (!meta.version || typeof meta.version !== 'string' || !meta.version.trim())
+            errs.push('"version" is required and must be a non-empty string (e.g. "1.0.0")');
+
         if (meta.description !== undefined && typeof meta.description !== 'string')
-            throw new Error('"description" must be a string');
+            errs.push('"description" must be a string');
 
         // main file must exist
         const mainFile = path.join(pluginDir, typeof meta.main === 'string' ? meta.main : 'index.js');
         if (!fs.existsSync(mainFile))
-            throw new Error(`main file "${path.relative(pluginDir, mainFile)}" not found in plugin directory`);
+            errs.push(`main file "${path.relative(pluginDir, mainFile)}" not found in plugin directory`);
 
         // dependencies: object<string, string>
         if (meta.dependencies !== undefined) {
             if (typeof meta.dependencies !== 'object' || Array.isArray(meta.dependencies))
-                throw new Error('"dependencies" must be an object, e.g. { "core": "*" }');
-            for (const [k, v] of Object.entries(meta.dependencies)) {
-                if (typeof v !== 'string')
-                    throw new Error(`"dependencies.${k}" value must be a string (e.g. "*")`);
+                errs.push('"dependencies" must be an object, e.g. { "core": "*" }');
+            else {
+                for (const [k, v] of Object.entries(meta.dependencies)) {
+                    if (typeof v !== 'string')
+                        errs.push(`"dependencies.${k}" value must be a string (e.g. "*")`);
+                }
             }
         }
 
         // permissions: string[]
         if (meta.permissions !== undefined) {
             if (!Array.isArray(meta.permissions))
-                throw new Error('"permissions" must be an array of strings');
-            for (let i = 0; i < meta.permissions.length; i++) {
-                if (typeof meta.permissions[i] !== 'string' || !meta.permissions[i].trim())
-                    throw new Error(`"permissions[${i}]" must be a non-empty string`);
+                errs.push('"permissions" must be an array of strings');
+            else {
+                for (let i = 0; i < meta.permissions.length; i++) {
+                    if (typeof meta.permissions[i] !== 'string' || !meta.permissions[i].trim())
+                        errs.push(`"permissions[${i}]" must be a non-empty string`);
+                }
             }
         }
 
         // uses: object<string, string[]>
         if (meta.uses !== undefined) {
             if (typeof meta.uses !== 'object' || Array.isArray(meta.uses))
-                throw new Error('"uses" must be an object mapping service names to arrays of method names');
-            for (const [k, v] of Object.entries(meta.uses)) {
-                if (!Array.isArray(v))
-                    throw new Error(`"uses.${k}" must be an array of method names`);
+                errs.push('"uses" must be an object mapping service names to arrays of method names');
+            else {
+                for (const [k, v] of Object.entries(meta.uses)) {
+                    if (!Array.isArray(v))
+                        errs.push(`"uses.${k}" must be an array of method names`);
+                }
             }
         }
 
         // permissionReasons: object<string, string>
         if (meta.permissionReasons !== undefined) {
             if (typeof meta.permissionReasons !== 'object' || Array.isArray(meta.permissionReasons))
-                throw new Error('"permissionReasons" must be an object mapping permission strings to reason strings');
-            for (const [k, v] of Object.entries(meta.permissionReasons)) {
-                if (typeof v !== 'string')
-                    throw new Error(`"permissionReasons.${k}" value must be a string`);
+                errs.push('"permissionReasons" must be an object mapping permission strings to reason strings');
+            else {
+                for (const [k, v] of Object.entries(meta.permissionReasons)) {
+                    if (typeof v !== 'string')
+                        errs.push(`"permissionReasons.${k}" value must be a string`);
+                }
             }
         }
+
+        return errs;
     }
 
+    // Returns an array of error strings (empty = valid). Never throws.
     _validateBundleManifest(meta) {
-        if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('bundle.computer must be a JSON object');
-        if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
-            throw new Error('"id" is required and must be a non-empty string');
-        if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
-            throw new Error(`"id" "${meta.id}" is invalid - use lowercase letters, digits, hyphens, or underscores`);
-        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
-            throw new Error('"name" is required and must be a non-empty string');
-        if (!Array.isArray(meta.plugins) || meta.plugins.length === 0)
-            throw new Error('"plugins" must be a non-empty array of plugin IDs');
-        for (let i = 0; i < meta.plugins.length; i++) {
-            if (!meta.plugins[i] || typeof meta.plugins[i] !== 'string' || !meta.plugins[i].trim())
-                throw new Error(`"plugins[${i}]" must be a non-empty string plugin ID`);
+        const errs = [];
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+            errs.push('bundle.computer must be a JSON object');
+            return errs;
         }
+        if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
+            errs.push('"id" is required and must be a non-empty string');
+        else if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
+            errs.push(`"id" "${meta.id}" is invalid — use lowercase letters, digits, hyphens, or underscores`);
+
+        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
+            errs.push('"name" is required and must be a non-empty string');
+
+        if (!meta.version || typeof meta.version !== 'string' || !meta.version.trim())
+            errs.push('"version" is required and must be a non-empty string (e.g. "1.0.0")');
+
+        if (!Array.isArray(meta.plugins) || meta.plugins.length === 0)
+            errs.push('"plugins" must be a non-empty array of plugin IDs');
+        else {
+            for (let i = 0; i < meta.plugins.length; i++) {
+                if (!meta.plugins[i] || typeof meta.plugins[i] !== 'string' || !meta.plugins[i].trim())
+                    errs.push(`"plugins[${i}]" must be a non-empty string plugin ID`);
+            }
+        }
+
+        return errs;
     }
 
     // -- Sandbox context builder -----------------------------------------------
@@ -902,6 +1204,77 @@ class PluginVM {
                     };
                 }
 
+                // -- Hooks service: gated by hooks.action / hooks.filter / hooks.fire ----
+                if (name === 'hooks') {
+                    if (!has('hooks.action') && !has('hooks.filter') && !has('hooks.fire')) {
+                        throw new Error(
+                            `Permission denied: plugin "${pluginId}" needs hooks.action, hooks.filter, ` +
+                            `or hooks.fire in permissions to access the hooks service`
+                        );
+                    }
+                    // Wildcard-aware matcher: checks if any granted perm covers the hook name.
+                    // e.g. "hooks.action:app:*" matches "app:launch", "app:file-open"
+                    //      "hooks.action:my-plugin:data" matches only "my-plugin:data"
+                    //      "hooks.action" (unscoped) matches everything
+                    const hookAllowed = (base, hookName) => {
+                        if (grantedPerms.has(base)) return true; // unscoped = all hooks
+                        for (const p of grantedPerms) {
+                            if (!p.startsWith(base + ':')) continue;
+                            const pattern = p.slice(base.length + 1);
+                            if (pattern === hookName) return true;
+                            // Wildcard: "app:*" matches "app:launch", "app:file-open", etc.
+                            if (pattern.endsWith(':*')) {
+                                const prefix = pattern.slice(0, -1); // "app:"
+                                if (hookName.startsWith(prefix)) return true;
+                            }
+                            // Single wildcard: "*" matches everything
+                            if (pattern === '*') return true;
+                        }
+                        return false;
+                    };
+                    return {
+                        addAction(hook, callback, priority) {
+                            if (!hookAllowed('hooks.action', hook)) {
+                                throw new Error(`Permission denied: hooks.action for "${hook}" not granted`);
+                            }
+                            return service.addAction(hook, callback, priority, pluginId);
+                        },
+                        removeAction(hook, callback) {
+                            if (!hookAllowed('hooks.action', hook)) {
+                                throw new Error(`Permission denied: hooks.action for "${hook}" not granted`);
+                            }
+                            return service.removeAction(hook, callback);
+                        },
+                        addFilter(hook, callback, priority) {
+                            if (!hookAllowed('hooks.filter', hook)) {
+                                throw new Error(`Permission denied: hooks.filter for "${hook}" not granted`);
+                            }
+                            return service.addFilter(hook, callback, priority, pluginId);
+                        },
+                        removeFilter(hook, callback) {
+                            if (!hookAllowed('hooks.filter', hook)) {
+                                throw new Error(`Permission denied: hooks.filter for "${hook}" not granted`);
+                            }
+                            return service.removeFilter(hook, callback);
+                        },
+                        async doAction(hook, data) {
+                            if (!hookAllowed('hooks.fire', hook)) {
+                                throw new Error(`Permission denied: hooks.fire for "${hook}" not granted`);
+                            }
+                            return service.doAction(hook, data);
+                        },
+                        async applyFilters(hook, value, data) {
+                            if (!hookAllowed('hooks.fire', hook)) {
+                                throw new Error(`Permission denied: hooks.fire for "${hook}" not granted`);
+                            }
+                            return service.applyFilters(hook, value, data);
+                        },
+                        getRegistrations() {
+                            return service.getRegistrations();
+                        },
+                    };
+                }
+
                 // Function filtering: "uses": { "hello": ["greet"] } in plugin.computer
                 const allowed = (meta.uses || {})[name];
                 if (Array.isArray(allowed) && allowed.length > 0 &&
@@ -937,12 +1310,21 @@ class PluginVM {
         ]);
 
         const moduleObj = { exports: {} };
+        const tag = `[${meta.id}]`;
+        const pluginConsole = {
+            log  : (...a) => console.log(tag, ...a),
+            info : (...a) => console.info(tag, ...a),
+            warn : (...a) => console.warn(tag, ...a),
+            error: (...a) => console.error(tag, ...a),
+            debug: (...a) => console.debug(tag, ...a),
+            trace: (...a) => console.trace(tag, ...a),
+        };
         const sandbox = vm.createContext({
             module     : moduleObj,
             exports    : moduleObj.exports,
             __dirname  : pluginDir,
             __filename : mainFile,
-            console,
+            console    : pluginConsole,
             Buffer,
             setTimeout, clearTimeout, setInterval, clearInterval,
             Promise,
@@ -1034,7 +1416,8 @@ class PluginVM {
             if (fs.existsSync(bundleFile)) {
                 try {
                     const meta = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
-                    this._validateBundleManifest(meta);
+                    const errs = this._validateBundleManifest(meta);
+                    if (errs.length) throw new Error(errs.join('; '));
                     meta._dir    = dir;
                     meta._folder = folder;
                     bundleManifests[meta.id] = meta;
@@ -1045,7 +1428,8 @@ class PluginVM {
             } else if (fs.existsSync(pluginFile)) {
                 try {
                     const meta = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
-                    this._validatePluginManifest(meta, dir);
+                    const errs = this._validatePluginManifest(meta, dir);
+                    if (errs.length) throw new Error(errs.join('; '));
                     meta._dir    = dir;
                     meta._folder = folder;
                     pluginManifests[meta.id] = meta;

@@ -9,8 +9,12 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 # Single-instance guard
+# AbandonedMutexException means the previous owner crashed - treat as free.
 $_mutex = New-Object System.Threading.Mutex($false, "Global\$($AppName)_Uninstall_Mutex")
-if (-not $_mutex.WaitOne(0, $false)) {
+$_mutexOwned = $false
+try { $_mutexOwned = $_mutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $_mutexOwned = $true }
+if (-not $_mutexOwned) {
     [System.Windows.Forms.MessageBox]::Show(
         "$AppName Uninstaller is already running.", "$AppName Uninstaller",
         [System.Windows.Forms.MessageBoxButtons]::OK,
@@ -21,7 +25,10 @@ if (-not $_mutex.WaitOne(0, $false)) {
 
 # Check if the installer is running
 $_setupMutex = New-Object System.Threading.Mutex($false, "Global\$($AppName)_Setup_Mutex")
-if (-not $_setupMutex.WaitOne(0, $false)) {
+$_setupOwned = $false
+try { $_setupOwned = $_setupMutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $_setupOwned = $true }
+if (-not $_setupOwned) {
     [System.Windows.Forms.MessageBox]::Show(
         "$AppName Setup is currently running. Please close it before uninstalling.", "$AppName Uninstaller",
         [System.Windows.Forms.MessageBoxButtons]::OK,
@@ -107,7 +114,7 @@ $script:uninstallDone = $false
 $frm                 = New-Object System.Windows.Forms.Form
 $frm.Text            = "Uninstall $AppName"
 $frm.ClientSize      = New-Object System.Drawing.Size(420, 210)
-$frm.StartPosition   = "CenterScreen"
+$frm.StartPosition   = "Manual"
 $frm.FormBorderStyle = "FixedDialog"
 $frm.MaximizeBox     = $false
 $frm.MinimizeBox     = $false
@@ -119,7 +126,14 @@ if (Test-Path $_icoPath) {
     $frm.Icon = [System.Drawing.SystemIcons]::Shield
 }
 
-$frm.Add_Load({ [UninstDark]::Enable($frm.Handle) })
+$frm.Add_Load({
+    [UninstDark]::Enable($frm.Handle)
+    $s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $frm.Location = New-Object System.Drawing.Point(
+        [int]($s.X + ($s.Width  - $frm.Width)  / 2),
+        [int]($s.Y + ($s.Height - $frm.Height) / 2)
+    )
+})
 
 $icoLbl           = New-Object System.Windows.Forms.Label
 $icoLbl.Text      = "!"
