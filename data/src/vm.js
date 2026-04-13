@@ -64,8 +64,13 @@ class PluginVM {
         this._services         = new Map();   // name -> value (provided by plugins)
         this._serviceProviders = new Map();   // service name -> pluginId that provided it
         this._loaded      = [];          // plugin/bundle IDs loaded in this session
-        this._pluginMetas = new Map();   // pluginId -> plugin.json contents
+        this._pluginMetas = new Map();   // pluginId -> plugin.computer contents
         this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
+    }
+
+    /** Returns a service by name, or undefined if not registered. */
+    getService(name) {
+        return this._services.get(name);
     }
 
     // -- Feature flags (read from data/config.json, same file as core's Config) -
@@ -477,8 +482,8 @@ class PluginVM {
 
         for (const folder of folders) {
             const dir        = path.join(this.pluginsDir, folder);
-            const bundleFile = path.join(dir, 'bundle.json');
-            const pluginFile = path.join(dir, 'plugin.json');
+            const bundleFile = path.join(dir, 'bundle.computer');
+            const pluginFile = path.join(dir, 'plugin.computer');
 
             if (fs.existsSync(bundleFile)) {
                 try {
@@ -500,7 +505,7 @@ class PluginVM {
                         id: folder, name: folder, version: '', description: '',
                         type: 'bundle', members: [], dependencies: [], permissions: [], dependents: [],
                         status: 'error', loaded: false,
-                        error: entry.error || `bundle.json parse error: ${e.message}`,
+                        error: entry.error || `bundle.computer parse error: ${e.message}`,
                     });
                 }
             } else if (fs.existsSync(pluginFile)) {
@@ -524,7 +529,7 @@ class PluginVM {
                         id: folder, name: folder, version: '', description: '',
                         type: 'plugin', dependencies: [], permissions: [], dependents: [],
                         status: 'error', loaded: false,
-                        error: entry.error || `plugin.json parse error: ${e.message}`,
+                        error: entry.error || `plugin.computer parse error: ${e.message}`,
                     });
                 }
             }
@@ -601,12 +606,12 @@ class PluginVM {
     // -- Manifest validation ---------------------------------------------------
 
     /**
-     * Throws a descriptive Error if plugin.json is structurally wrong or missing required fields.
+     * Throws a descriptive Error if plugin.computer is structurally wrong or missing required fields.
      * Call this immediately after JSON.parse so bad manifests are caught before any loading begins.
      */
     _validatePluginManifest(meta, pluginDir) {
         if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('plugin.json must be a JSON object');
+            throw new Error('plugin.computer must be a JSON object');
 
         // Required fields
         if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
@@ -670,7 +675,7 @@ class PluginVM {
 
     _validateBundleManifest(meta) {
         if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('bundle.json must be a JSON object');
+            throw new Error('bundle.computer must be a JSON object');
         if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
             throw new Error('"id" is required and must be a non-empty string');
         if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
@@ -838,7 +843,7 @@ class PluginVM {
                 // The built-in 'vm' service is gated by the vm.manage permission
                 if (name === 'vm') {
                     if (!has('vm.manage')) {
-                        throw new Error('Permission denied: vm.manage not granted - declare it in plugin.json to access VM control');
+                        throw new Error('Permission denied: vm.manage not granted - declare it in plugin.computer to access VM control');
                     }
                 } else {
                     // Access gate: caller must declare the providing plugin as a dependency
@@ -848,7 +853,7 @@ class PluginVM {
                         if (!deps.includes(providerId)) {
                             throw new Error(
                                 `Plugin "${pluginId}" used service "${name}" (from "${providerId}") ` +
-                                `without declaring "${providerId}" as a dependency in plugin.json`
+                                `without declaring "${providerId}" as a dependency in plugin.computer`
                             );
                         }
                     }
@@ -897,7 +902,7 @@ class PluginVM {
                     };
                 }
 
-                // Function filtering: "uses": { "hello": ["greet"] } in plugin.json
+                // Function filtering: "uses": { "hello": ["greet"] } in plugin.computer
                 const allowed = (meta.uses || {})[name];
                 if (Array.isArray(allowed) && allowed.length > 0 &&
                     typeof service === 'object' && service !== null) {
@@ -962,7 +967,7 @@ class PluginVM {
     // -- loadPlugin (single plugin, no cache management) ----------------------
 
     async loadPlugin(pluginDir) {
-        const metaPath = path.join(pluginDir, 'plugin.json');
+        const metaPath = path.join(pluginDir, 'plugin.computer');
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 
         const pluginDataDir = path.join(this.dataDir, 'plugins', meta.id);
@@ -1023,8 +1028,8 @@ class PluginVM {
 
         for (const folder of presentFolders) {
             const dir        = path.join(this.pluginsDir, folder);
-            const bundleFile = path.join(dir, 'bundle.json');
-            const pluginFile = path.join(dir, 'plugin.json');
+            const bundleFile = path.join(dir, 'bundle.computer');
+            const pluginFile = path.join(dir, 'plugin.computer');
 
             if (fs.existsSync(bundleFile)) {
                 try {
