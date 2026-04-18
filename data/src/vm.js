@@ -273,7 +273,7 @@ ${body}
         });
         server.listen(0, '127.0.0.1', () => {
             const { port } = server.address();
-            this._openBrowser(`http://127.0.0.1:${port}/`, 480, type === 'error' ? 340 : 280);
+            this._openBrowser(`http://127.0.0.1:${port}/`, 480, type === 'error' ? 340 : 280, title);
         });
     }
 
@@ -336,12 +336,15 @@ ${body}
         return candidates.find(p => { try { fs.accessSync(p); return true; } catch (_) { return false; } }) || null;
     }
 
-    _openBrowser(url, w = 450, h = 380) {
+    _openBrowser(url, w = 450, h = 380, windowTitle = '') {
         const edge = this._findEdge();
         if (edge) {
             // A dedicated profile dir forces Edge to open a fresh window that
             // actually respects --window-size (ignored when a profile is already open).
-            const profileDir = path.join(this.dataDir, 'edge-dialog-profile');
+            const profileDir = path.join(
+                this.dataDir,
+                `edge-dialog-profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+            );
 
             // Center on primary monitor (best-effort, falls back to 0,0 area)
             let posX = 100, posY = 100;
@@ -373,52 +376,42 @@ ${body}
             child.unref();
 
             // Bring the Edge window to foreground after it loads.
-            // Uses HWND_TOPMOST trick: briefly makes the window always-on-top then
-            // restores it - this bypasses the foreground lock entirely.
-            // Retries for up to 6 seconds in case Edge is slow to create its window.
+            // Chromium browsers may hand off --app launches to an existing process,
+            // so AppActivate by PID can target a short-lived launcher process.
+            // Prefer title activation and keep PID as a fallback.
             const pid = child.pid;
-            if (pid) {
-                spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
-                    `Add-Type @"
-using System; using System.Runtime.InteropServices;
-public class FG {
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    public delegate bool EnumProc(IntPtr h, IntPtr lp);
-    public static IntPtr FindByPid(int pid) {
-        IntPtr found = IntPtr.Zero;
-        EnumWindows((h, lp) => {
-            uint wp; GetWindowThreadProcessId(h, out wp);
-            if ((int)wp == pid && IsWindowVisible(h)) { found = h; return false; }
-            return true;
-        }, IntPtr.Zero);
-        return found;
-    }
-    public static void Activate(IntPtr hwnd) {
-        ShowWindow(hwnd, 9);
-        SetWindowPos(hwnd, (IntPtr)(-1), 0, 0, 0, 0, 0x0003);
-        SetWindowPos(hwnd, (IntPtr)(-2), 0, 0, 0, 0, 0x0003);
-        SetForegroundWindow(hwnd);
-    }
-}
-"@;` +
-                    `$deadline=(Get-Date).AddSeconds(6);` +
-                    `$h=[IntPtr]::Zero;` +
-                    `while((Get-Date)-lt $deadline){` +
-                    `  $h=[FG]::FindByPid(${pid});` +
-                    `  if($h -ne [IntPtr]::Zero){break};` +
-                    `  foreach($c in (Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" -EA SilentlyContinue)){` +
-                    `    $h=[FG]::FindByPid($c.ProcessId);if($h -ne [IntPtr]::Zero){break}` +
-                    `  };` +
-                    `  if($h -ne [IntPtr]::Zero){break};` +
-                    `  Start-Sleep -Milliseconds 300` +
-                    `};` +
-                    `if($h -ne [IntPtr]::Zero){[FG]::Activate($h)}`
-                ], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+            const title = String(windowTitle || '').trim();
+            if (pid || title) {
+                const vbsTitle = title.replace(/"/g, '""');
+                const vbs = [
+                    'Dim wsh, deadline, activated',
+                    'Set wsh = CreateObject("WScript.Shell")',
+                    `Dim rootPid : rootPid = ${Number(pid || 0)}`,
+                    `Dim winTitle : winTitle = "${vbsTitle}"`,
+                    'deadline = Now() + TimeSerial(0, 0, 8)',
+                    'activated = False',
+                    'Do While Now() < deadline And Not activated',
+                    '    If Len(winTitle) > 0 Then',
+                    '        activated = wsh.AppActivate(winTitle)',
+                    '    End If',
+                    '    If (Not activated) And rootPid > 0 Then',
+                    '        activated = wsh.AppActivate(rootPid)',
+                    '    End If',
+                    '    If Not activated Then WScript.Sleep 250',
+                    'Loop',
+                ].join('\r\n');
+                const tmpVbs = path.join(
+                    process.env.TEMP || process.env.TMP || require('os').tmpdir(),
+                    `computer-focus-${pid}.vbs`
+                );
+                try { fs.writeFileSync(tmpVbs, vbs, 'ascii'); } catch (_) {}
+                const focusProc = spawn('wscript.exe',
+                    ['/nologo', tmpVbs],
+                    { detached: true, stdio: 'ignore', windowsHide: true });
+                focusProc.unref();
+                focusProc.on('close', () => {
+                    try { fs.unlinkSync(tmpVbs); } catch (_) {}
+                });
             }
         } else {
             exec(`cmd /c start "" "${url}"`);
@@ -521,7 +514,7 @@ public class FG {
 
             server.listen(0, '127.0.0.1', () => {
                 const { port } = server.address();
-                this._openBrowser(`http://127.0.0.1:${port}/`, winW, winH);
+                this._openBrowser(`http://127.0.0.1:${port}/`, winW, winH, 'Plugin Permissions');
             });
 
             server.on('error', (err) => {
